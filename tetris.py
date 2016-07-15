@@ -75,7 +75,7 @@ class Tetris:
 
     def drow_field(self, field = self.field, isFirst = False):
         if not isFirst:
-            sys.stdout.write("\033[{}A".format(field_info[1]))
+            sys.stdout.write("\033[{}A".format(self.field_info[1]))
         for row in field:
             print("".join(row))
 
@@ -90,11 +90,18 @@ class Tetris:
 
     def isGameOver(self):
         if '#' in self.field[0]:
-            show(drowGameOver(self.field))
+            self.drow_field(self.drowGameOver(self.field))
             return True
         else: return False
 
-
+    def getNextField(self, field = self.field, block = self.block):
+        f = copy.deepcopy(field)
+        for f_i, b_row in zip(range(self.row, self.row + len(block)), block):
+            for f_j, b in zip(range(pos, len(block[0]) + pos), b_row):
+                if b == '#':
+                    f[f_i][f_j] = b
+        return f
+     
 
     def start(self):
         while True:
