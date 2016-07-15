@@ -5,6 +5,7 @@ import copy
 import threading
 import msvcrt
 import random
+import argparse
 
 class block:
     def __init__(self,data):
@@ -21,16 +22,7 @@ class block:
         for row in self.data:
             pass
 
-blk1 = [['_','#','#'],
-        ['#','#','_']]
-blk2 = [['#','_','_'],
-        ['#','#','#']]
-blk3 = [['#','#','#'],
-        ['_','#','_']]
-blk4 = [['#','#'],
-        ['#','#']]
-blk5 = [['#','#','#','#']]
-
+parser = argparse.ArgumentParser(description = "TETRIS")
 
 field_info = [10,15] #x,y
 blocks = [
@@ -46,21 +38,89 @@ blocks = [
         [['#','#'],
          ['#','#']],
         
-        [['#','#','#','#']],
-
-        [['#']]
+        [['#','#','#','#']]
         ]
 
 field = [['_' for _ in range(field_info[0])] for _ in range(field_info[1])]
 
 class Tetris:
     def __init__(self, field_size = [10,10]):
+        self.field_info = field_size #x,y
         self.field = [ ['_' for _ in range(field_size[0])] for _ in range(field_size[1]) ]
-        self.field_info = field_size
-        
+        self.tmp_field = []
+
+        self.blocks =  [['_','#','#'],
+                         ['#','#','_']],
+
+                        [['#','_','_'],
+                         ['#','#','#']],
+
+                        [['#','#','#'],
+                         ['_','#','_']],
+                        
+                        [['#','#'],
+                         ['#','#']],
+                        
+                        [['#','#','#','#']]]
+
+        self.block = []
+
+    def isHit(self, block_pos):
+        for b_row, f_row in zip(self.block,block_pos):
+            for b, f in zip(b_row, f_row):
+                if b == '#' and f == '#':
+                    return True
+        else:
+            return False
+
+    def drow_field(self, field = self.field, isFirst = False):
+        if not isFirst:
+            sys.stdout.write("\033[{}A".format(field_info[1]))
+        for row in field:
+            print("".join(row))
+
+    def drowGameOver(self):
+        str_size = len("gameover")
+
+        if self.field_info[0] > str_size:
+            start_index = int((self.field_info[0]-str_size)/2)
+            self.field[int(self.field_info[1]/2)][start_index:str_size+1] = "GameOver"
+        return self.field
+     
+
+    def isGameOver(self):
+        if '#' in self.field[0]:
+            show(drowGameOver(self.field))
+            return True
+        else: return False
+
+
+
     def start(self):
         while True:
-            pass
+            block = rotateBlock(blocks[random.randint(0,len(blocks)-1)],
+                            random.randint(0,3))
+        pos = int((len(field[0]) - len(block[0]))/2)
+        row = 0
+        tmp_field = getNextField(0,field,block)
+        while row < field_info[1] - len(block)+1:
+            block = waitKey(0.3,block,row)
+            block_pos = [rows[pos:len(block[0])+pos] for rows in field[row:row+len(block)]]
+            if isHit(block,block_pos) or end_flag:
+                field = tmp_field
+                #field = getNextField(row,field,block)
+                show(field)
+                break
+            else:
+                tmp_field = getNextField(row,field,block)
+                show(tmp_field)
+            row += 1
+        else:
+            field = getNextField(field_info[1] - len(block),field,block)
+        field = checkCompleteLine(field)
+        show(field)
+        if isGameOver(field) or end_flag:
+            break
 
 def isGameOver(field):
     if '#' in field[0]:
