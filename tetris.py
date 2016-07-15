@@ -6,32 +6,6 @@ import threading
 import msvcrt
 import random
 
-class block:
-    def __init__(self,data):
-        self.data = data
-        self.height
-    def __reset_height(self):
-        self.height = 0
-        for index, row in enumwrate(self.data):
-            if '#' in row:
-                self.height += 1
-    def __reset_width(self):
-        min = len(self.data[0])
-        max = 0
-        for row in self.data:
-            pass
-
-blk1 = [['_','#','#'],
-        ['#','#','_']]
-blk2 = [['#','_','_'],
-        ['#','#','#']]
-blk3 = [['#','#','#'],
-        ['_','#','_']]
-blk4 = [['#','#'],
-        ['#','#']]
-blk5 = [['#','#','#','#']]
-
-
 field_info = [10,15] #x,y
 blocks = [
         [['_','#','#'],
@@ -52,15 +26,6 @@ blocks = [
         ]
 
 field = [['_' for _ in range(field_info[0])] for _ in range(field_info[1])]
-
-class Tetris:
-    def __init__(self, field_size = [10,10]):
-        self.field = [ ['_' for _ in range(field_size[0])] for _ in range(field_size[1]) ]
-        self.field_info = field_size
-        
-    def start(self):
-        while True:
-            pass
 
 def isGameOver(field):
     if '#' in field[0]:
@@ -162,7 +127,6 @@ def rotateBlock(block, direction):
     elif direction == 3:#flip
         block.reverse()
         return block
-
 
 thread = threading.Thread(target = waitKey_thread)
 thread.daemon = True
