@@ -7,41 +7,6 @@ import msvcrt
 import random
 import argparse
 
-class block:
-    def __init__(self,data):
-        self.data = data
-        self.height
-    def __reset_height(self):
-        self.height = 0
-        for index, row in enumwrate(self.data):
-            if '#' in row:
-                self.height += 1
-    def __reset_width(self):
-        min = len(self.data[0])
-        max = 0
-        for row in self.data:
-            pass
-
-parser = argparse.ArgumentParser(description = "TETRIS")
-
-field_info = [10,15] #x,y
-blocks = [
-        [['_','#','#'],
-         ['#','#','_']],
-
-        [['#','_','_'],
-         ['#','#','#']],
-
-        [['#','#','#'],
-         ['_','#','_']],
-        
-        [['#','#'],
-         ['#','#']],
-        
-        [['#','#','#','#']]
-        ]
-
-field = [['_' for _ in range(field_info[0])] for _ in range(field_info[1])]
 
 class Tetris:
     def __init__(self, field_size = [10,10]):
@@ -49,7 +14,8 @@ class Tetris:
         self.field = [ ['_' for _ in range(field_size[0])] for _ in range(field_size[1]) ]
         self.tmp_field = []
 
-        self.blocks =  [['_','#','#'],
+        self.blocks =  [
+                        [['_','#','#'],
                          ['#','#','_']],
 
                         [['#','_','_'],
@@ -65,6 +31,10 @@ class Tetris:
 
         self.block = []
 
+        self.movement = 0
+        self.rotate_flag = 0
+        self.end_flag = 0
+
     def isHit(self, block_pos):
         for b_row, f_row in zip(self.block,block_pos):
             for b, f in zip(b_row, f_row):
@@ -73,13 +43,14 @@ class Tetris:
         else:
             return False
 
-    def drow_field(self, field = self.field, isFirst = False):
+    def draw_field(self, field = None, isFirst = False):
+        field = self.field if field == None else field
         if not isFirst:
             sys.stdout.write("\033[{}A".format(self.field_info[1]))
         for row in field:
             print("".join(row))
 
-    def drowGameOver(self):
+    def drawGameOver(self):
         str_size = len("gameover")
 
         if self.field_info[0] > str_size:
@@ -90,174 +61,116 @@ class Tetris:
 
     def isGameOver(self):
         if '#' in self.field[0]:
-            self.drow_field(self.drowGameOver(self.field))
+            self.draw_field(self.drawGameOver())
             return True
         else: return False
 
-    def getNextField(self, field = self.field, block = self.block):
+    def getNextField(self, field = None, block = None):
+        field = self.field if field == None else field
+        block = self.block if block == None else block
+
         f = copy.deepcopy(field)
         for f_i, b_row in zip(range(self.row, self.row + len(block)), block):
-            for f_j, b in zip(range(pos, len(block[0]) + pos), b_row):
+            for f_j, b in zip(range(self.pos, len(block[0]) + self.pos), b_row):
                 if b == '#':
                     f[f_i][f_j] = b
         return f
      
+    def checkCompleteLine(self):
+        ret = []
+        deleteCount = 0
+        for index, row in enumerate(self.field):
+            if not '_' in row:
+                deleteCount += 1
+            else:
+                ret.append(row)
+        return [['_']*self.field_info[0] for _ in range(deleteCount)] + ret
+
+    def waitKey_thread(self):
+        while True:
+            s = str(msvcrt.getwch())
+            #sys.stdout.write("\033[1A")
+            if s in 'j' or s in 'a':
+                self.movement -= 1
+            if s in 'l' or s in 'd':
+                self.movement += 1
+            if s in 'k' or s in 's':
+                self.rotate_flag = 1
+            if s in 'q':
+                self.end_flag = 1
+
+    def start_wait_key(self):
+        self.thread = threading.Thread(target = self.waitKey_thread)
+        self.thread.daemon = True
+        self.thread.start()
+
+    def waitKey(self, waitTime):
+        time.sleep(waitTime)
+        
+        self.block = self.rotateBlock(self.block, self.rotate_flag)
+        if self.isHit( [rows[self.pos : len(self.block[0])+self.pos] 
+                        for rows in self.field[self.row:self.row+len(self.block)]] ) \
+            or len(self.block) + self.row > len(self.field):
+            self.block = self.rotateBlock(self.block, 
+                    1 if self.rotate_flag == 2 else 2 if self.rotate_flag == 1 else 0)
+        self.rotate_flag = 0
+
+        if self.pos + self.movement >= 0 \
+                and self.pos + self.movement <= self.field_info[0] - len(self.block[0]) \
+                and not self.isHit(
+                        [rows[self.pos+self.movement : len(self.block[0])+self.pos+self.movement] 
+                            for rows in self.field[self.row:self.row+len(self.block)]] ):
+            self.pos += self.movement
+        self.movement = 0
+
+    def rotateBlock(self, block, direction):
+        ret = [ list(b) for b in zip(*block)]
+        if direction == 0:
+            return block
+        elif direction == 1:#cw
+            [row.reverse() for row in ret]
+            return ret
+        elif direction == 2:#ccw
+            ret.reverse()
+            return ret
+        elif direction == 3:#flip
+            block.reverse()
+            return block
 
     def start(self):
+        self.start_wait_key()
+        self.draw_field(self.field, True)
         while True:
-            block = rotateBlock(blocks[random.randint(0,len(blocks)-1)],
-                            random.randint(0,3))
-        pos = int((len(field[0]) - len(block[0]))/2)
-        row = 0
-        tmp_field = getNextField(0,field,block)
-        while row < field_info[1] - len(block)+1:
-            block = waitKey(0.3,block,row)
-            block_pos = [rows[pos:len(block[0])+pos] for rows in field[row:row+len(block)]]
-            if isHit(block,block_pos) or end_flag:
-                field = tmp_field
-                #field = getNextField(row,field,block)
-                show(field)
-                break
-            else:
-                tmp_field = getNextField(row,field,block)
-                show(tmp_field)
-            row += 1
-        else:
-            field = getNextField(field_info[1] - len(block),field,block)
-        field = checkCompleteLine(field)
-        show(field)
-        if isGameOver(field) or end_flag:
-            break
-
-def isGameOver(field):
-    if '#' in field[0]:
-        show(drowGameOver(field))
-        return True
-    else: return False
-
-def drowGameOver(field):
-    f_rows = len(field)
-    f_cols = len(field[0])
-    str_size = len("GameOver")
-
-    if f_cols > str_size:
-        start_index = int((f_cols-str_size)/2)
-        field[int(f_rows/2)][start_index:str_size+1] = "GameOver"
-    return field
-    
-
-def isHit(block,block_pos):
-    for b_row, f_row in zip(block,block_pos):
-        for b, f in zip(b_row, f_row):
-            if b == '#' and f == '#':
-                return True
-    else:
-        return False
-
-def show(field, isFirst = False):
-    if not isFirst:
-        sys.stdout.write("\033[{}A".format(field_info[1]))
-    for row in field:
-        print("".join(row))
-
-def getNextField(row,field,block):
-    #f = field[:][:]
-    f = copy.deepcopy(field)
-    for f_i, b_row in zip(range(row,row+len(block)), block):
-        for f_j, b in zip(range(pos,len(block[0])+pos), b_row):
-            if b == '#':
-                f[f_i][f_j] = b
-    return f
-    
-def checkCompleteLine(field):
-    ret = []
-    deleteCount = 0
-    for index, row in enumerate(field):
-        if not '_' in row:
-            deleteCount += 1
-        else:
-            ret.append(row)
-    return [['_']*field_info[0] for _ in range(deleteCount)] + ret
-def waitKey_thread():
-    global x
-    global rotate_flag
-    global end_flag
-    while True:
-        s = str(msvcrt.getwch())
-        #sys.stdout.write("\033[1A")
-        if s in 'j' or s in 'a':
-            x -= 1
-        if s in 'l' or s in 'd':
-            x += 1
-        if s in 'k' or s in 's':
-            rotate_flag = 1
-        if s in 'q':
-            end_flag = 1
-x = 0
-pos = 0
-rotate_flag = 0
-end_flag = 0
-def waitKey(waitTime, block, row):
-    time.sleep(waitTime)
-    global x
-    global pos
-    global rotate_flag
-    
-    block = rotateBlock(block, rotate_flag)
-    if isHit(block, [rows[pos : len(block[0])+pos] for rows in field[row:row+len(block)]] ) \
-        or len(block) + row > len(field):
-        block = rotateBlock(block, 1 if rotate_flag == 2 else 2 if rotate_flag == 1 else 0)
-    rotate_flag = 0
-
-    if pos + x >=0 and pos + x <= field_info[0] - len(block[0]) \
-      and not isHit(block, [rows[pos+x : len(block[0])+pos+x] for rows in field[row:row+len(block)]] ):
-        pos += x
-    x=0
-
-    return block
-    
-def rotateBlock(block, direction):
-    ret = [ list(b) for b in zip(*block)]
-    if direction == 0:
-        return block
-    elif direction == 1:#cw
-        [row.reverse() for row in ret]
-        return ret
-    elif direction == 2:#ccw
-        ret.reverse()
-        return ret
-    elif direction == 3:#flip
-        block.reverse()
-        return block
-
-
-thread = threading.Thread(target = waitKey_thread)
-thread.daemon = True
-thread.start()
-
-show(field, True)
-#for _ in range(10):
-while True:
-    block = rotateBlock(blocks[random.randint(0,len(blocks)-1)],
+            self.block = self.rotateBlock(self.blocks[random.randint(0,len(self.blocks)-1)],
                         random.randint(0,3))
-    pos = int((len(field[0]) - len(block[0]))/2)
-    row = 0
-    tmp_field = getNextField(0,field,block)
-    while row < field_info[1] - len(block)+1:
-        block = waitKey(0.3,block,row)
-        block_pos = [rows[pos:len(block[0])+pos] for rows in field[row:row+len(block)]]
-        if isHit(block,block_pos) or end_flag:
-            field = tmp_field
-            #field = getNextField(row,field,block)
-            show(field)
-            break
-        else:
-            tmp_field = getNextField(row,field,block)
-            show(tmp_field)
-        row += 1
-    else:
-        field = getNextField(field_info[1] - len(block),field,block)
-    field = checkCompleteLine(field)
-    show(field)
-    if isGameOver(field) or end_flag:
-        break
+            self.pos = int((len(self.field[0]) - len(self.block[0]))/2)
+            self.row = 0
+            self.tmp_field = self.getNextField()
+            while self.row < self.field_info[1] - len(self.block) + 1:
+                self.waitKey(0.3)
+                block_pos = [rows[self.pos:len(self.block[0])+self.pos] 
+                        for rows in self.field[self.row:self.row+len(self.block)]]
+                if self.isHit(block_pos) or self.end_flag:
+                    self.field = self.tmp_field
+                    #field = getNextField(row,field,block)
+                    self.draw_field()
+                    break
+                else:
+                    self.tmp_field = self.getNextField()
+                    self.draw_field(self.tmp_field)
+                self.row += 1
+            else:
+                self.row -= 1
+                self.field = self.getNextField()
+            self.field = self.checkCompleteLine()
+            self.draw_field()
+            if self.isGameOver() or self.end_flag:
+                break
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description = "TETRIS")
+
+    tetris = Tetris([10,15])
+    tetris.start()
+
