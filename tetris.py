@@ -26,7 +26,7 @@ class Drawer():
 class Tetris:
     def __init__(self, field_size = [10,15]):
         self.field_info = field_size #x,y
-        self.field = [ ['_' for _ in range(field_size[0])] for _ in range(field_size[1]) ]
+        self.field = [ ['_' for _ in range(field_size[0])] for _ in range(field_size[1] + 1) ]
         self.tmp_field = []
 
         self.blocks =  [
@@ -49,10 +49,12 @@ class Tetris:
         self.movement = 0
         self.rotate_flag = 0
         self.end_flag = 0
+        self.skip_flag = 0
 
         self.drawer = Drawer()
 
         self.score = 0
+        self.speed = 1.0
 
     def is_hit(self, block_pos):
         for b_row, f_row in zip(self.block,block_pos):
@@ -68,7 +70,7 @@ class Tetris:
 #            sys.stdout.write("\033[{}A".format(self.field_info[1]))
             self.drawer.reset()
         self.drawer.draw_line("\n\n SCORE : {}\n".format(self.score))
-        for row in field:
+        for row in field[:-1]:
 #           print("".join(row))
             self.drawer.draw_line("".join(row))
 
@@ -120,15 +122,15 @@ class Tetris:
                 self.rotate_flag = 1
             if s in 'q':
                 self.end_flag = 1
+            if s in 'i' or s in 'w':
+                self.skip_flag = 1
 
     def start_wait_key(self):
         self.thread = threading.Thread(target = self.wait_key_thread)
         self.thread.daemon = True
         self.thread.start()
 
-    def wait_key(self, waitTime):
-        time.sleep(waitTime)
-        
+    def wait_key(self):
         self.block, self.block_size = self.get_block_size( self.rotate_block(self.block, self.rotate_flag))
         if self.is_hit( [rows[self.pos : self.block_size[0] + self.pos] 
                         for rows in self.field[self.row:self.row + self.block_size[1]]] ) \
@@ -144,6 +146,16 @@ class Tetris:
                             for rows in self.field[ self.row : self.row + self.block_size[1] ]] ):
             self.pos += self.movement
         self.movement = 0
+
+        if self.skip_flag:
+            self.skip_flag = 0
+            #while is_hit(get_block_size()):
+            for index in range(self.row, self.field_info[1] - self.block_size[1] + 1):
+                self.row = index
+                if self.is_hit(self.get_block_pos()):
+                    break
+                self.tmp_field = self.get_next_field()
+
 
     def rotate_block(self, block, direction):
         ret = [ list(b) for b in zip(*block)]
@@ -167,18 +179,31 @@ class Tetris:
     def get_block_size(self, block):
         return block, [ len( block[0] ), len( block ) ]
 
+    def get_block_pos(self, rows = 0, movement = 0):
+        return [ rows[ self.pos + movement : self.block_size[0] + self.pos + movement ] 
+                        for rows in self.field[ self.row + rows : self.row + rows + self.block_size[1] ]]
+
     def start(self):
         self.start_wait_key()
         self.draw_field(self.field, True)
+        
+        self.pretime = time.time()
+        self.blockcount = 0
+        self.hitflag = False
         while True:
+            self.blockcount += 1
+            if not self.blockcount % 5:self.speed -= 0.1
             self.block, self.block_size = self.get_new_block()
             self.pos = int( ( self.field_info[0] - self.block_size[0] ) / 2 )
             self.row = 0
             self.tmp_field = self.get_next_field()
-            while self.row < self.field_info[1] - self.block_size[1] + 1:
-                self.wait_key(0.3)
-                block_pos = [ rows[ self.pos : self.block_size[0] + self.pos ] 
-                        for rows in self.field[ self.row : self.row + self.block_size[1] ]]
+            while self.row <= self.field_info[1] - self.block_size[1]:
+                self.nowtime = time.time()
+                if self.nowtime - self.pretime > self.speed:
+                    self.row += 1
+                    self.pretime = self.nowtime
+                self.wait_key()
+                block_pos = self.get_block_pos()
                 if self.is_hit(block_pos) or self.end_flag:
                     self.field = self.tmp_field
                     self.draw_field()
@@ -186,7 +211,6 @@ class Tetris:
                 else:
                     self.tmp_field = self.get_next_field()
                     self.draw_field(self.tmp_field)
-                self.row += 1
             else:
                 self.row = self.field_info[1] - self.block_size[1]
                 self.field = self.get_next_field()
