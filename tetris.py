@@ -7,16 +7,24 @@ import msvcrt
 import random
 import argparse
 
+#•`‰æ‚ðŠÇ—‚·‚éƒNƒ‰ƒX
 class Drawer():
     def __init__(self):
         self.rows = 0
+        self.max_cols = []
 
     def draw_line(self, line):
-        print (line)
-        for c in line:
-            if c == '\n':
-                self.rows += 1
+        if len(self.max_cols)-1 >= self.rows:
+            print (line + " " * self.max_cols[self.rows])
+            self.max_cols[self.rows] = len(line)
+        else:
+            print(line)
+            self.max_cols.append(len(line))
         self.rows += 1
+
+    def draw_lines(self, lines):
+        for c in lines.split("\n"):
+            self.draw_line(c)
 
     def reset(self):
         sys.stdout.write("\033[{}A".format(self.rows))
@@ -30,21 +38,21 @@ class Tetris:
         self.tmp_field = []
 
         self.blocks =  [
-                        [['_','#','#'],
-                         ['#','#','_']],
+                        [[' ','#','#'],
+                         ['#','#',' ']],
 
-                        [['#','_','_'],
+                        [['#',' ',' '],
                          ['#','#','#']],
 
                         [['#','#','#'],
-                         ['_','#','_']],
+                         [' ','#',' ']],
                         
                         [['#','#'],
                          ['#','#']],
                         
                         [['#','#','#','#']]]
 
-        self.block = [[]]
+        self.next_block, _ = self.get_new_block()
 
         self.movement = 0
         self.rotate_flag = 0
@@ -69,10 +77,15 @@ class Tetris:
         if not isFirst:
 #            sys.stdout.write("\033[{}A".format(self.field_info[1]))
             self.drawer.reset()
-        self.drawer.draw_line("\n\n SCORE : {}\n".format(self.score))
+        self.drawer.draw_lines("\n\n SCORE : {}\n".format(self.score))
+        self.drawer.draw_lines(" NEXT :\n")
+        for row in self.next_block:
+            self.drawer.draw_lines("  " + "".join(row))
+        for _ in range(4-len(self.next_block)):
+            self.drawer.draw_lines("")
         for row in field[:-1]:
 #           print("".join(row))
-            self.drawer.draw_line("".join(row))
+            self.drawer.draw_lines(" " + "".join(row))
 
     def draw_gameover(self):
         str_size = len("gameover")
@@ -156,7 +169,6 @@ class Tetris:
                     break
                 self.tmp_field = self.get_next_field()
 
-
     def rotate_block(self, block, direction):
         ret = [ list(b) for b in zip(*block)]
         if direction == 0:
@@ -192,8 +204,9 @@ class Tetris:
         self.hitflag = False
         while True:
             self.blockcount += 1
-            if not self.blockcount % 5:self.speed -= 0.1
-            self.block, self.block_size = self.get_new_block()
+            if not int(self.blockcount % 5):self.speed -= 0.1
+            self.block, self.block_size = self.get_block_size(self.next_block)
+            self.next_block, _ = self.get_new_block()
             self.pos = int( ( self.field_info[0] - self.block_size[0] ) / 2 )
             self.row = 0
             self.tmp_field = self.get_next_field()
