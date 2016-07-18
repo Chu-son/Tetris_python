@@ -30,7 +30,6 @@ class Drawer():
         sys.stdout.write("\033[{}A".format(self.rows))
         self.rows = 0
 
-
 class Tetris:
     def __init__(self, field_size = [10,15]):
         self.field_info = field_size #x,y
