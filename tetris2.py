@@ -1,5 +1,4 @@
-#-*- coding:utf-8 -*- 
-import sys
+ï»¿#-*- coding:utf-8 -*- 
 import time
 import copy
 import threading
@@ -7,18 +6,23 @@ import msvcrt
 import random
 import argparse
 
-#•`‰æ‚ðŠÇ—‚·‚éƒNƒ‰ƒX
+#æç”»ã‚’ç®¡ç†ã™ã‚‹ã‚¯ãƒ©ã‚¹
 class Drawer():
     def __init__(self):
         self.rows = 0
         self.max_cols = []
 
     def draw_line(self, line):
+        for c in line:
+            if isinstance(c, list):
+                print(c[1]+c[0], end = '')
+            else:
+                print( c , end = '')
         if len(self.max_cols)-1 >= self.rows:
-            print (line + " " * self.max_cols[self.rows])
+            print ("ã€€" * self.max_cols[self.rows])
             self.max_cols[self.rows] = len(line)
         else:
-            print(line)
+            print()
             self.max_cols.append(len(line))
         self.rows += 1
 
@@ -27,30 +31,29 @@ class Drawer():
             self.draw_line(c)
 
     def reset(self):
-#       sys.stdout.write("\033[{}A".format(self.rows))
         print("\033[{}A".format(self.rows),end="")
         self.rows = 0
 
 class Tetris:
     def __init__(self, field_size = [10,15]):
         self.field_info = field_size #x,y
-        self.field = [ ['_' for _ in range(field_size[0])] for _ in range(field_size[1] + 1) ]
+        self.field = [ ['ï¼¿' for _ in range(field_size[0])] for _ in range(field_size[1] + 1) ]
         self.tmp_field = []
 
         self.blocks =  [
-                        [[' ','#','#'],
-                         ['#','#',' ']],
+                        [['ã€€','â– ','â– '],
+                         ['â– ','â– ','ã€€']],
 
-                        [['#',' ',' '],
-                         ['#','#','#']],
+                        [['â– ','ã€€','ã€€'],
+                         ['â– ','â– ','â– ']],
 
-                        [['#','#','#'],
-                         [' ','#',' ']],
+                        [['â– ','â– ','â– '],
+                         ['ã€€','â– ','ã€€']],
                         
-                        [['#','#'],
-                         ['#','#']],
+                        [['â– ','â– '],
+                         ['â– ','â– ']],
                         
-                        [['#','#','#','#']]]
+                        [['â– ','â– ','â– ','â– ']]]
 
         self.next_block, _ = self.get_new_block()
 
@@ -67,48 +70,53 @@ class Tetris:
     def is_hit(self, block_pos):
         for b_row, f_row in zip(self.block,block_pos):
             for b, f in zip(b_row, f_row):
-                if b == '#' and f == '#':
+                if b == 'â– ' and f == 'â– ':
                     return True
         else:
             return False
-
-    def wide_join(self, line):
-        ret_line = ""
-        for c in line:
-            ret_line += c + c if c == '#' or c == '_' else c + ' '
-        return ret_line
 
     def draw_field(self, field = None ):
         field = self.field if field == None else field
         
         self.drawer.reset()
         
-#ƒXƒRƒA•\Ž¦
-        self.drawer.draw_lines("\n\n SCORE : {}\n".format(self.score))
+#ã‚¹ã‚³ã‚¢è¡¨ç¤º
+        self.drawer.draw_line("")
+        self.drawer.draw_line("")
+        self.drawer.draw_line("SCORE : {}".format(self.score))
+        self.drawer.draw_line("")
         
-#ŽŸ‚ÌƒuƒƒbƒN
-        self.drawer.draw_lines(" NEXT :\n")
+#æ¬¡ã®ãƒ–ãƒ­ãƒƒã‚¯
+        self.drawer.draw_line(" NEXT :")
+        self.drawer.draw_line("")
         for row in self.next_block:
-            self.drawer.draw_lines("  " + "".join(row))
-#s”‡‚í‚¹
+#           self.drawer.draw_line("  " + "".join(row))
+            self.drawer.draw_line([" "] + row)
+#è¡Œæ•°åˆã‚ã›
         for _ in range(4-len(self.next_block)):
-            self.drawer.draw_lines("")
+            self.drawer.draw_line("")
         
-#ƒtƒB[ƒ‹ƒh•\Ž¦
+#ãƒ•ã‚£ãƒ¼ãƒ«ãƒ‰è¡¨ç¤º
         for row in field[:-1]:
-#           self.drawer.draw_lines(" " + "".join(row))
-            self.drawer.draw_lines(" " + self.wide_join(row)) 
+#           self.drawer.draw_line(" " + "".join(row))
+            self.drawer.draw_line([" "] + row)
 
     def draw_gameover(self):
-        str_size = len("gameover")
+        GO = list("ï¼§ï½ï½ï½…ï¼¯ï½–ï½…ï½’")
+        GO[0] = [GO[0], "\033[35m\033[47m\033[1m"]
+        
+        str_size = len(GO)
 
         if self.field_info[0] > str_size:
             start_index = int((self.field_info[0]-str_size)/2)
-            self.field[int(self.field_info[1]/2)][start_index:str_size+1] = "GameOver"
+            self.field[int(self.field_info[1]/2)][start_index:str_size+1] = GO
+
+            self.field[int(self.field_info[1]/2)][str_size + 1] = [self.field[int(self.field_info[1]/2)][str_size + 1], "\033[39m\033[49m\033[0m"] 
+        
         return self.field
 
     def is_gameover(self):
-        if '#' in self.field[0]:
+        if 'â– ' in self.field[0]:
             self.draw_field(self.draw_gameover())
             return True
         else: return False
@@ -120,7 +128,7 @@ class Tetris:
         f = copy.deepcopy(field)
         for f_i, b_row in zip(range(self.row, self.row + len(block)), block):
             for f_j, b in zip(range(self.pos, len(block[0]) + self.pos), b_row):
-                if b == '#':
+                if b == 'â– ':
                     f[f_i][f_j] = b
         return f
      
@@ -128,17 +136,16 @@ class Tetris:
         ret = []
         deleteCount = 0
         for index, row in enumerate(self.field):
-            if not '_' in row:
+            if not 'ï¼¿' in row:
                 deleteCount += 1
             else:
                 ret.append(row)
         self.score += deleteCount * 10
-        return [['_']*self.field_info[0] for _ in range(deleteCount)] + ret
+        return [['ï¼¿']*self.field_info[0] for _ in range(deleteCount)] + ret
 
     def wait_key_thread(self):
         while True:
             s = str(msvcrt.getwch())
-            #sys.stdout.write("\033[1A")
             if s in 'j' or s in 'a':
                 self.movement -= 1
             if s in 'l' or s in 'd':
@@ -208,6 +215,9 @@ class Tetris:
                         for rows in self.field[ self.row + rows : self.row + rows + self.block_size[1] ]]
 
     def start(self):
+#       print("\033[2", end = '')
+        print("\033[0;0H", end = '')
+        print("\033[2J", end = '')
         self.start_wait_key()
         self.draw_field(self.field)
         
