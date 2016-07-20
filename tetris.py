@@ -11,7 +11,7 @@ class Drawer():
     def __init__(self):
         self.rows = 0
         self.max_cols = []
-
+        
     def draw_line(self, line):
         for c in line:
             if isinstance(c, list):
