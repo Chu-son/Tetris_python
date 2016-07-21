@@ -14,45 +14,49 @@ import chainer.functions as F
 
 def print_23(s = '', end = None):
     if end != None:
-#       print(s,end = end)
-        print s,
+        print(s,end = end)
+#       print s,
     else:
         print(s)
 
 class SState(object):
     def __init__(self, field_size, frame_num):
+        self.frame_num = frame_num
         self.seq = np.ones((frame_num, field_size[0] * field_size[1]), dtype=np.float32)
         
     def push_s(self, state):
-        self.seq[1:frame_num] = self.seq[0:frame_num-1]
+        self.seq[1:self.frame_num] = self.seq[0:self.frame_num-1]
         self.seq[0] = state
         
     def fill_s(self, state):
-        for i in range(0, frame_num):
+        for i in range(0, self.frame_num):
             self.seq[i] = state
 
 class Q(Chain):
     def __init__(self, state_dim, action_num ):
         super(Q, self).__init__(
-            l1=F.Linear(state_dim, 500),
-            q_value=F.Linear(500, action_num)
+            l1=F.Linear(state_dim, 1000),
+            l2=F.Linear(1000, 1000),
+            q_value=F.Linear(1000, action_num)
         )
     def __call__(self, x, t):
         return F.mean_squared_error(self.predict(x, train=True), t)
         
     def predict(self, x, train = False):
         h1 = F.leaky_relu(self.l1(x))
-        y = F.leaky_relu(self.q_value(h1))
+        h2 = F.leaky_relu(self.l2(h1))
+        y = F.leaky_relu(self.q_value(h2))
         return y
 
 
 class Agent():
     def __init__(self, field, epsilon = 0.99):
         # 行動
-        self.actions = range(-5, 7)
+        self.actions = range(-3, 5)
         self.prevActions = np.zeros_like(self.actions)
         
-        self.STATE_DIM = len(field) * len(field[0]) + len(self.prevActions)
+        FRAME_NUM = 2
+        self.STATE_DIM = len(field) * len(field[0]) * FRAME_NUM + len(self.prevActions)
         
         # DQN Model
         self.model = Q(self.STATE_DIM, len(self.actions))
@@ -71,11 +75,15 @@ class Agent():
         self.gamma = 0.7
         self.loss = 0.0
         
-        self.State = SState([len(field),len(field[0])], 2)
+        self.State = SState([len(field),len(field[0])], FRAME_NUM)
         self.prevState = np.ones((1,self.STATE_DIM))
     
     def UpdateState(self, field ):
-        s = np.array(field, dtype = np.float32).reshape((1,-1))
+        f = []
+        for rows in field:
+            for state in rows:
+                f.append(0 if state=='＿' else 1)
+        s = np.array(f, dtype = np.float32).reshape((1,-1))
         self.State.push_s(s)
 
     def get_action_value(self, state):
@@ -170,7 +178,7 @@ class Drawer():
 class Tetris:
     def __init__(self, field_size = [10,15]):
         self.field_info = field_size #x,y
-        self.field = [ [u'＿' for _ in range(field_size[0])] for _ in range(field_size[1] + 1) ]
+        self.field = self.new_field()
         self.tmp_field = []
 
         self.blocks =  [
@@ -202,13 +210,14 @@ class Tetris:
         self.speed = 1.0
 
         self.agent = Agent(self.field)
+        self.action = 0
 
     def ai_get_action(self):
         # Update States
         self.agent.UpdateState(self.tmp_field)
-        state = np.hstack((self.agent.State.seq.reshape(1,-1), 
+        self.state = np.hstack((self.agent.State.seq.reshape(1,-1), 
                     self.agent.prevActions.reshape(1,-1))).astype(np.float32)
-        action, self.agent.prevActions = self.agent.get_action(state, True)
+        action, self.agent.prevActions = self.agent.get_action(self.state, True)
         return action
 
     def ai_learning(self):
@@ -222,9 +231,9 @@ class Tetris:
                     self.agent.prevState,
                     np.array([np.argmax(self.agent.prevActions)]).reshape(1,-1),
                     np.array([reward]).reshape(1,-1),
-                    state
+                    self.state
                 ]))
-        self.agent.prevState = state.copy()
+        self.agent.prevState = self.state.copy()
         self.agent.update_model()
         self.agent.reduce_epsilon()
 
@@ -256,9 +265,10 @@ class Tetris:
         #行数合わせ
         for _ in range(4-len(self.next_block)):
             self.drawer.draw_line("")
+        self.drawer.draw_lines(str(self.action))
         
         #フィールド表示
-        for row in field[:-1]:
+        for row in field:
 #           self.drawer.draw_line(" " + "".join(row))
             self.drawer.draw_line([" "] + row)
 
@@ -277,7 +287,7 @@ class Tetris:
         return self.field
 
     def is_gameover(self):
-        if '■' in self.field[0]:
+        if '■' in self.field[0][1:-1]:
             self.draw_field(self.draw_gameover())
             return True
         else: return False
@@ -296,13 +306,14 @@ class Tetris:
     def delete_complete_lines(self):
         ret = []
         deleteCount = 0
-        for index, row in enumerate(self.field):
+        for index, row in enumerate(self.field[:-1]):
             if not '＿' in row:
                 deleteCount += 1
             else:
                 ret.append(row)
+        ret.append(self.field[-1])
         self.score += deleteCount * 10
-        return [['＿']*self.field_info[0] for _ in range(deleteCount)] + ret
+        return [self.new_line() for _ in range(deleteCount)] + ret
 
     def wait_key_thread(self):
         while True:
@@ -324,13 +335,14 @@ class Tetris:
         self.thread.start()
 
     def wait_key(self):
-        action = self.ai_get_action()
-        if action == 5 or action == 6:
-            self.rotate_flag = action - 4
-        elif action == -5:
+        action = int(self.ai_get_action())
+        if action == 3 or action == 4:
+            self.rotate_flag = action - 2
+        elif action == -3:
             self.skip_flag = 1
         else:
             self.movement = action
+        self.action = action
 
         self.block, self.block_size = self.get_block_size( self.rotate_block(self.block, self.rotate_flag))
         if self.is_hit( [rows[self.pos : self.block_size[0] + self.pos] 
@@ -384,6 +396,15 @@ class Tetris:
         return [ rows[ self.pos + movement : self.block_size[0] + self.pos + movement ] 
                         for rows in self.field[ self.row + rows : self.row + rows + self.block_size[1] ]]
 
+    def new_field(self):
+#       return [ ['＿' for _ in range(self.field_info[0])] for _ in range(self.field_info[1] + 1) ]
+        ret = [ self.new_line() for _ in range(self.field_info[1] ) ]
+        ret.append( str('■ ' + '■ '*self.field_info[0] + '■').split(' '))
+        return ret
+
+    def new_line(self):
+        return str('■ ' + '＿ '*self.field_info[0] + '■').split(' ')
+
     def start(self):
 #       print_23("\033[2", end = '')
         print_23("\033[0;0H", end = '')
@@ -397,7 +418,7 @@ class Tetris:
         self.hitflag = False
 
         # GameOverまでループ
-        while True:
+        while self.end_flag == 0:
             # スピードの管理
             self.blockcount += 1
             if not int(self.blockcount % 5):self.speed -= 0.1
@@ -436,8 +457,9 @@ class Tetris:
                 self.field = self.get_next_field()
             self.field = self.delete_complete_lines()
             self.draw_field()
-            if self.is_gameover() or self.end_flag:
-                break
+            if self.is_gameover():
+#               break
+                self.field = self.new_field()
 
 if __name__ == "__main__":
 
