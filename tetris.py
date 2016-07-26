@@ -8,9 +8,19 @@ import argparse
 
 import math
 import numpy as np
+import chainer
 from chainer import cuda, optimizers, FunctionSet, Variable, Chain
 import chainer.functions as F
 
+
+gpu_flag = -1
+if gpu_flag >= 0:
+    cuda.check_cuda_available()
+    chainer.Function.type_check_enable = False
+    cuda.get_device(gpu_flag).use()
+    xp = cuda.cupy
+else:
+    xp = np
 
 def print_23(s = '', end = None):
     if end != None:
@@ -63,9 +73,13 @@ class Agent():
         
         # DQN Model
         self.model = Q(self.STATE_DIM, len(self.actions))
+        if gpu_flag >= 0:
+            self.model.to_gpu()
+
         self.model_target = copy.deepcopy(self.model)
 
         self.optimizer = optimizers.RMSpropGraves(lr=0.00025,alpha=0.95,momentum=0.95,eps=0.0001)
+#       self.optimizer = optimizers.Adam()
         self.optimizer.setup(self.model)
         
         self.epsilon = epsilon
@@ -109,7 +123,7 @@ class Agent():
         return action_index
         
     def reduce_epsilon(self):
-        self.epsilon -= 1.0/10**6
+        self.epsilon -= 1.0/5000
         self.epsilon = max(0.1, self.epsilon) 
         
     def get_action(self,state,train):
@@ -132,22 +146,22 @@ class Agent():
 
     def update_model(self):
         batch_index = np.random.permutation(self.memSize)[:self.batch_num]
-        prev_state  = np.array(self.eMem[0][batch_index], dtype=np.float32)
-        action      = np.array(self.eMem[1][batch_index], dtype=np.float32)
-        reward      = np.array(self.eMem[2][batch_index], dtype=np.float32)
-        state       = np.array(self.eMem[3][batch_index], dtype=np.float32)
+        prev_state  = xp.array(self.eMem[0][batch_index], dtype=xp.float32)
+        action      = xp.array(self.eMem[1][batch_index], dtype=xp.float32)
+        reward      = xp.array(self.eMem[2][batch_index], dtype=xp.float32)
+        state       = xp.array(self.eMem[3][batch_index], dtype=xp.float32)
         
         s = Variable(prev_state)
         Q = self.model.predict(s)
 
         s_dash = Variable(state)
         tmp = self.model_target.predict(s_dash)
-        tmp = list(map(np.max, tmp.data))
-        max_Q_dash = np.asanyarray(tmp,dtype=np.float32)
-        target = np.asanyarray(Q.data,dtype=np.float32)
+        tmp = list(map(xp.max, tmp.data))
+        max_Q_dash = xp.asanyarray(tmp,dtype=xp.float32)
+        target = xp.asanyarray(Q.data,dtype=xp.float32)
 
         for i in range(self.batch_num):
-            tmp_ = np.sign(reward[i]) + self.gamma * max_Q_dash[i]
+            tmp_ = xp.sign(reward[i]) + self.gamma * max_Q_dash[i]
             action_index = self.action_to_index(action[i])
             target[i,action_index] = tmp_
 
@@ -155,10 +169,12 @@ class Agent():
         td_tmp = td.data + 1000.0 * (abs(td.data) <= 1)
         td_clip = td * (abs(td.data) <= 1) + td/abs(td_tmp) * (abs(td.data) > 1)
         
-        zero_val = Variable(np.zeros((self.batch_num, len(self.actions)),dtype=np.float32))
+        zero_val = Variable(xp.zeros((self.batch_num, len(self.actions)),dtype=xp.float32))
 
         # ネットの更新
         self.model.zerograds()
+#       self.optimizer.zero_grads()
+        
         loss = F.mean_squared_error(td_clip, zero_val)
         self.loss = loss.data
         loss.backward()
@@ -259,7 +275,6 @@ class Tetris:
         self.pre_score = self.score
         
         # Learning Step
-        # 行動する前のフレームとその前のフレームを記憶してるけどいいの？
         self.agent.experience(
                     self.agent.prevState,
                     self.agent.prevActions[0],
