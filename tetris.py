@@ -24,7 +24,7 @@ else:
 
 def print_23(s = '', end = None):
     if end != None:
-        print(s,end = end)
+        print(s,end = '')
 #       print s,
     else:
         print(s)
@@ -47,7 +47,8 @@ class Q(Chain):
         super(Q, self).__init__(
             l1=F.Linear(state_dim, 3000),
             l2=F.Linear(3000, 3000),
-            l3=F.Linear(3000, 512),
+            l3=F.Linear(3000, 3000),
+            l4=F.Linear(3000, 512),
             q_value=F.Linear(512, action_num)
         )
     def __call__(self, x, t):
@@ -57,7 +58,8 @@ class Q(Chain):
         h1 = F.leaky_relu(self.l1(x))
         h2 = F.leaky_relu(self.l2(h1))
         h3 = F.leaky_relu(self.l3(h2))
-        y = self.q_value(h3)
+        h4 = F.leaky_relu(self.l4(h3))
+        y = self.q_value(h4)
         return y
 
 
@@ -123,7 +125,7 @@ class Agent():
         return action_index
         
     def reduce_epsilon(self):
-        self.epsilon -= 1.0/5000
+        self.epsilon -= 1.0/10**6
         self.epsilon = max(0.1, self.epsilon) 
         
     def get_action(self,state,train):
@@ -131,7 +133,7 @@ class Agent():
         if train==True and np.random.random() < self.epsilon:
             action_index = np.random.randint(len(self.actions))
         else:
-            action_index = self.get_greedy_action(state)
+            action_index = cuda.to_cpu(self.get_greedy_action(state))
         return self.actions[action_index]
 
     def experience(self, prev_state, action, reward, state):
@@ -257,19 +259,20 @@ class Tetris:
         self.reward = 0
         self.times = 0
 
+        
+        self.draw_field(self.field)
+        self.pretime = time.time()
+        self.blockcount = 0
+
     def ai_get_action(self):
         # Update States
         self.agent.UpdateState(self.tmp_field)
         self.state = np.hstack((self.agent.State.seq.reshape(1,-1), 
                     self.agent.prevActions.reshape(1,-1))).astype(np.float32)
-        action = self.agent.get_action(self.state, True)
+        s = cuda.to_gpu(self.state) if gpu_flag >= 0 else self.state
+        action = self.agent.get_action(s, True)
         self.agent.push_prev_actions(action)
-        # 学習
-        self.ai_learning()
 
-        return action
-
-    def ai_learning(self):
         # 報酬計算(とりあえず点数の差分)
         self.reward += (self.score - self.pre_score) * 10
         self.pre_score = self.score
@@ -282,15 +285,22 @@ class Tetris:
                     self.state
                 )
         self.agent.prevState = self.state.copy()
+
+        self.reward = -50
+        self.times += 1
+        
+        # 学習
+        self.ai_learning()
+
+        return action
+
+    def ai_learning(self):
         self.agent.update_model()
 
         if self.agent.initial_exploration < self.times:
             self.agent.reduce_epsilon()
         if self.agent.initial_exploration < self.times and self.times % self.agent.target_model_update_freq == 0:
             self.agent.target_model_update()
-
-        self.reward = -50
-        self.times += 1
 
     def is_hit(self, block_pos):
         for b_row, f_row in zip(self.block,block_pos):
@@ -407,7 +417,7 @@ class Tetris:
                     1 if self.rotate_flag == 2 else 2 if self.rotate_flag == 1 else 0))
 
         if self.pos + self.movement >= 0 \
-                and self.pos + self.movement <= self.field_info[0] - self.block_size[0] \
+                and self.pos + self.movement <= self.field_info[0] - self.block_size[0] + 1\
                 and not self.is_hit(
                         [rows[self.pos + self.movement : self.block_size[0] + self.pos+self.movement] 
                             for rows in self.field[ self.row : self.row + self.block_size[1] ]] ):
@@ -465,10 +475,6 @@ class Tetris:
         print_23("\033[2J", end = '')
 
         self.start_wait_key()
-        self.draw_field(self.field)
-        
-        self.pretime = time.time()
-        self.blockcount = 0
 
         # GameOverまでループ
         while self.end_flag == 0:
