@@ -244,6 +244,31 @@ class Drawer():
 class Tetris:
     agent = None
     times = 0
+    total_score = 0
+    end_flag = 0
+    
+    @classmethod
+    def wait_end_key_thread(cls):
+        while True:
+            s = str(msvcrt.getwch())
+            if s in 'q':
+                Tetris.end_flag = 1
+
+    @classmethod
+    def start_wait_end_key(cls):
+        thread = threading.Thread(target = Tetris.wait_end_key_thread)
+        thread.daemon = True
+        thread.start()
+    
+    @classmethod
+    def ai_learning(cls):
+        Tetris.agent.update_model()
+
+        if Tetris.agent.initial_exploration < Tetris.times:
+            Tetris.agent.reduce_epsilon()
+        if Tetris.agent.initial_exploration < Tetris.times and Tetris.times % Tetris.agent.target_model_update_freq == 0:
+            Tetris.agent.target_model_update()
+
     def __init__(self, field_size = [10,15], is_half = False, is_draw = True):
         self.field_info = field_size #x,y
         self.field = self.new_field()
@@ -268,7 +293,6 @@ class Tetris:
 
         self.movement = 0
         self.rotate_flag = 0
-        self.end_flag = 0
         self.skip_flag = 0
 
         self.is_half = is_half
@@ -303,7 +327,8 @@ class Tetris:
         self.container.push_prev_actions(action)
 
         # 報酬計算(とりあえず点数の差分)
-        self.reward += (self.score - self.pre_score) * 10
+        self.reward += self.score - self.pre_score
+        Tetris.total_score += self.score - self.pre_score
         self.pre_score = self.score
         
         # Learning Step
@@ -315,21 +340,10 @@ class Tetris:
                 )
         self.container.prevState = self.state.copy()
 
-        self.reward = -50
+        self.reward = 0
         Tetris.times += 1
         
-        # 学習
-        self.ai_learning()
-
         return action
-
-    def ai_learning(cls):
-        Tetris.agent.update_model()
-
-        if Tetris.agent.initial_exploration < Tetris.times:
-            Tetris.agent.reduce_epsilon()
-        if Tetris.agent.initial_exploration < Tetris.times and Tetris.times % Tetris.agent.target_model_update_freq == 0:
-            Tetris.agent.target_model_update()
 
     def is_hit(self, block_pos):
         for b_row, f_row in zip(self.block,block_pos):
@@ -347,7 +361,7 @@ class Tetris:
         #スコア表示
         self.drawer.draw_line("")
         self.drawer.draw_line("")
-        self.drawer.draw_line("SCORE : {}".format(self.score))
+        self.drawer.draw_line("TOTAL SCORE : {}".format(Tetris.total_score))
         self.drawer.draw_line("")
         
         #次のブロック
@@ -422,7 +436,7 @@ class Tetris:
             if s in 'k' or s in 's':
                 self.rotate_flag = 1
             if s in 'q':
-                self.end_flag = 1
+                Tetris.end_flag = 1
             if s in 'i' or s in 'w':
                 self.skip_flag = 1
 
@@ -432,14 +446,15 @@ class Tetris:
         self.thread.start()
 
     def wait_key(self):
-        action = int(self.ai_get_action())
-        if action == 3 or action == 4:
-            self.rotate_flag = action - 2
-        elif action == -3:
-            self.skip_flag = 1
-        else:
-            self.movement = action
-        self.action = action
+        if Tetris.agent != None:
+            action = int(self.ai_get_action())
+            if action == 3 or action == 4:
+                self.rotate_flag = action - 2
+            elif action == -3:
+                self.skip_flag = 1
+            else:
+                self.movement = action
+            self.action = action
 
         self.block, self.block_size = self.get_block_size( self.rotate_block(self.block, self.rotate_flag))
         if self.is_hit( [rows[self.pos : self.block_size[0] + self.pos] 
@@ -510,7 +525,7 @@ class Tetris:
         self.start_wait_key()
 
         # GameOverまでループ
-        while self.end_flag == 0:
+        while Tetris.end_flag == 0:
             # スピードの管理
 #           self.blockcount += 1
 #           if not int(self.blockcount % 5):self.speed -= 0.1
@@ -527,7 +542,7 @@ class Tetris:
                 
                 # ブロックの当たり判定
                 block_pos = self.get_block_pos()
-                if self.is_hit(block_pos) or self.end_flag:
+                if self.is_hit(block_pos) or Tetris.end_flag:
                     self.field = self.tmp_field
                     self.draw_field()
                     break
@@ -543,7 +558,7 @@ class Tetris:
 #               break
                 self.field = self.new_field()
                 self.speed = 1
-                self.reward -= 100
+                self.reward -= 10
 
     def init_next_block(self):
         # ブロック生成
@@ -565,7 +580,7 @@ class Tetris:
         # ブロックの当たり判定
         hit_flag = False
         block_pos = self.get_block_pos()
-        if self.is_hit(block_pos) or self.end_flag:
+        if self.is_hit(block_pos) or Tetris.end_flag:
             self.field = self.tmp_field
             self.draw_field()
             hit_flag = True
@@ -590,20 +605,25 @@ class Tetris:
         return True
 
 def start_learning():
-    tetris_list = [ Tetris([10,15],False,False) for _ in range(6) ]
+    print_23("\033[0;0H", end = '')
+    print_23("\033[2J", end = '')
+    
+    tetris_list = [ Tetris([10,15],False,False) for _ in range(10) ]
     tetris_list[0].set_draw(True)
+    Tetris.start_wait_end_key()
 
     for tetris in tetris_list:
         tetris.init_next_block()
         tetris.init_learning()
-    while tetris_list[0].end_flag == 0:
+    while Tetris.end_flag == 0:
         for tetris in tetris_list:
             tetris.move_blocks()
+        Tetris.ai_learning()
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description = "TETRIS")
 
-    #tetris = Tetris([10,15])
-    #tetris.start()
+#   tetris = Tetris([10,15])
+#   tetris.start()
     start_learning()
