@@ -243,6 +243,7 @@ class Drawer():
 # テトリスクラス
 class Tetris:
     agent = None
+    times = 0
     def __init__(self, field_size = [10,15], is_half = False, is_draw = True):
         self.field_info = field_size #x,y
         self.field = self.new_field()
@@ -279,8 +280,6 @@ class Tetris:
 
         self.action = 0
         self.reward = 0
-        self.times = 0
-
         
         self.pretime = time.time()
         self.blockcount = 0
@@ -317,19 +316,19 @@ class Tetris:
         self.container.prevState = self.state.copy()
 
         self.reward = -50
-        self.times += 1
+        Tetris.times += 1
         
         # 学習
         self.ai_learning()
 
         return action
 
-    def ai_learning(self):
+    def ai_learning(cls):
         Tetris.agent.update_model()
 
-        if Tetris.agent.initial_exploration < self.times:
+        if Tetris.agent.initial_exploration < Tetris.times:
             Tetris.agent.reduce_epsilon()
-        if Tetris.agent.initial_exploration < self.times and self.times % Tetris.agent.target_model_update_freq == 0:
+        if Tetris.agent.initial_exploration < Tetris.times and Tetris.times % Tetris.agent.target_model_update_freq == 0:
             Tetris.agent.target_model_update()
 
     def is_hit(self, block_pos):
@@ -360,6 +359,8 @@ class Tetris:
         #行数合わせ
         for _ in range(4-len(self.next_block)):
             self.drawer.draw_line("")
+        mem = str(Tetris.agent.memPos) if Tetris.agent != None else ''
+        self.drawer.draw_line(mem)
         ep = str(Tetris.agent.epsilon) if Tetris.agent != None else ''
         self.drawer.draw_line(ep)
         
