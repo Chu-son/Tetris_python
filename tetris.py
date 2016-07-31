@@ -1,10 +1,14 @@
 ﻿#-*- coding:utf-8 -*- 
+from __future__ import print_function
+import sys
+
 import time
 import copy
 import threading
 import msvcrt
 import random
 import argparse
+import pickle
 
 import math
 import numpy as np
@@ -13,19 +17,10 @@ from chainer import cuda, optimizers, FunctionSet, Variable, Chain
 import chainer.functions as F
 
 
-gpu_flag = -1
-if gpu_flag >= 0:
-    cuda.check_cuda_available()
-    chainer.Function.type_check_enable = False
-    cuda.get_device(gpu_flag).use()
-    xp = cuda.cupy
-else:
-    xp = np
-
+# 2系と3系の互換用.endがNoneでなければ改行しない
 def print_23(s = '', end = None):
     if end != None:
         print(s,end = '')
-#       print s,
     else:
         print(s)
 
@@ -52,8 +47,8 @@ class Q(Chain):
 
 class Agent():
     def __init__(self, field, epsilon = 1.0):
-        self.FRAME_NUM =10 
-        self.PREV_ACTIONS_NUM = 10
+        self.FRAME_NUM = 1
+        self.PREV_ACTIONS_NUM = 0
         self.FIELD_SIZE = [len(field[0]), len(field)]
         self.STATE_DIM = self.FIELD_SIZE[0] * self.FIELD_SIZE[1] * self.FRAME_NUM + self.PREV_ACTIONS_NUM
         
@@ -93,29 +88,20 @@ class Agent():
             self.prev_action_num = prev_action_num
             self.seq = np.ones((frame_num, field_size[0] * field_size[1]), dtype=np.float32)
             self.prevActions = np.zeros_like(range(prev_action_num))
+            self.prevAction = 0
             self.prevState = np.ones((1,field_size[0] * field_size[1] * frame_num + prev_action_num))
             
         def push_s(self, state):
+            if len(self.seq) == 0:return
+            state = np.array(state, dtype = np.float32).reshape((1,-1))
             self.seq[1:self.frame_num] = self.seq[0:self.frame_num-1]
             self.seq[0] = state
             
-        def fill_s(self, state):
-            for i in range(0, self.frame_num):
-                self.seq[i] = state
-        
         def push_prev_actions(self, action):
+            if len(self.prevActions) == 0: return
             self.prevActions[1:self.prev_action_num] = self.prevActions[:-1]
             self.prevActions[0] = action
     
-        def UpdateState(self, field ):
-#           f = []
-#           for rows in field:
-#               for state in rows:
-#                   f.append(0 if state=='＿' else 1)
-#           s = np.array(f, dtype = np.float32).reshape((1,-1))
-            s = np.array(field, dtype = np.float32).reshape((1,-1))
-            self.push_s(s)
-
     def get_container(self):
         return self.Container(self.FIELD_SIZE, self.FRAME_NUM, self.PREV_ACTIONS_NUM)
 
@@ -242,26 +228,30 @@ class Drawer():
 
 # テトリスクラス
 class Tetris:
+    # クラス変数
     agent = None
     times = 0
     total_score = 0
     end_flag = 0
-    
+
+    # クラスメソッド
     @classmethod
-    def wait_end_key_thread(cls):
-        while True:
+    def cm_wait_key_thread(cls):
+        stop_flag = False
+        while not stop_flag:
             s = str(msvcrt.getwch())
             if s in 'q':
                 Tetris.end_flag = 1
+                stop_flag = True
 
     @classmethod
-    def start_wait_end_key(cls):
-        thread = threading.Thread(target = Tetris.wait_end_key_thread)
-        thread.daemon = True
-        thread.start()
-    
+    def cm_start_wait_key(cls):
+        Tetris.thread = threading.Thread(target = Tetris.cm_wait_key_thread)
+        Tetris.thread.daemon = True
+        Tetris.thread.start()
+
     @classmethod
-    def ai_learning(cls):
+    def cm_ai_learning(cls):
         Tetris.agent.update_model()
 
         if Tetris.agent.initial_exploration < Tetris.times:
@@ -269,6 +259,7 @@ class Tetris:
         if Tetris.agent.initial_exploration < Tetris.times and Tetris.times % Tetris.agent.target_model_update_freq == 0:
             Tetris.agent.target_model_update()
 
+    # インスタンスメソッド
     def __init__(self, field_size = [10,15], is_half = False, is_draw = True):
         self.field_info = field_size #x,y
         self.field = self.new_field()
@@ -300,7 +291,8 @@ class Tetris:
 
         self.score = 0
         self.pre_score = 0
-        self.speed = 1.0
+        self.default_speed = 1.0
+        self.speed = self.default_speed
 
         self.action = 0
         self.reward = 0
@@ -319,9 +311,10 @@ class Tetris:
 
     def ai_get_action(self):
         # Update States
-        self.container.UpdateState(self.tmp_field)
-        self.state = np.hstack((self.container.seq.reshape(1,-1), 
-                    self.container.prevActions.reshape(1,-1))).astype(np.float32)
+        self.container.push_s(self.tmp_field)
+#       self.state = np.hstack((self.container.seq.reshape(1,-1), 
+#                   self.container.prevActions.reshape(1,-1))).astype(np.float32)
+        self.state = np.hstack(self.container.seq.reshape(1,-1)).astype(np.float32)
         s = cuda.to_gpu(self.state) if gpu_flag >= 0 else self.state
         action = Tetris.agent.get_action(s, True)
         self.container.push_prev_actions(action)
@@ -334,11 +327,12 @@ class Tetris:
         # Learning Step
         Tetris.agent.experience(
                     self.container.prevState,
-                    self.container.prevActions[0],
+                    self.container.prevAction,
                     self.reward,
                     self.state
                 )
         self.container.prevState = self.state.copy()
+        self.container.prevActon = action
 
         self.reward = 0
         Tetris.times += 1
@@ -509,13 +503,11 @@ class Tetris:
                         for rows in self.field[ self.row + rows : self.row + rows + self.block_size[1] ]]
 
     def new_field(self):
-#       return [ ['＿' for _ in range(self.field_info[0])] for _ in range(self.field_info[1] + 1) ]
         ret = [ self.new_line() for _ in range(self.field_info[1] ) ]
         ret.append(self.new_line(1))
         return ret
 
     def new_line(self, fill = 0):
-#       return str('■ ' + '＿ '*self.field_info[0] + '■').split(' ')
         return [1] + [fill for _ in range(self.field_info[0])] + [1]
 
     def start(self):
@@ -527,8 +519,8 @@ class Tetris:
         # GameOverまでループ
         while Tetris.end_flag == 0:
             # スピードの管理
-#           self.blockcount += 1
-#           if not int(self.blockcount % 5):self.speed -= 0.1
+            self.blockcount += 1
+            if not int(self.blockcount % 5):self.speed -= 0.1
             
             self.init_next_block()
 
@@ -558,7 +550,6 @@ class Tetris:
 #               break
                 self.field = self.new_field()
                 self.speed = 1
-                self.reward -= 10
 
     def init_next_block(self):
         # ブロック生成
@@ -599,31 +590,58 @@ class Tetris:
             self.init_next_block()
             if self.is_gameover():
                 self.field = self.new_field()
-                self.speed = 1
-                self.reward -= 100
+                self.speed = self.default_speed
+                self.reward -= 10
                 return False
         return True
 
-def start_learning():
+def start_learning(tetris_size, is_half, num_of_tetris):
     print_23("\033[0;0H", end = '')
     print_23("\033[2J", end = '')
     
-    tetris_list = [ Tetris([10,15],False,False) for _ in range(10) ]
+    tetris_list = [ Tetris(tetris_size, is_half, False) for _ in range(num_of_tetris) ]
     tetris_list[0].set_draw(True)
-    Tetris.start_wait_end_key()
+    Tetris.cm_start_wait_key()
 
     for tetris in tetris_list:
+        tetris.default_speed = 0
         tetris.init_next_block()
         tetris.init_learning()
     while Tetris.end_flag == 0:
         for tetris in tetris_list:
             tetris.move_blocks()
-        Tetris.ai_learning()
+        Tetris.cm_ai_learning()
+
+    is_save_model = input("Do you want to save ?(y/n) => ")
+    if 'y' in is_save_model or is_save_model == '':
+        with open("model.mymodel", "wb") as f:
+            pickle.dump(Tetris.agent.model.to_cpu(), f)
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(description = "TETRIS")
+    parser = argparse.ArgumentParser(add_help=False, description = "TETRIS")
+    parser.add_argument("--help", action="help")
+    parser.add_argument("-g","--gpu",type=int,default=0)
+    parser.add_argument("--half", type=bool, default=False)
+    parser.add_argument("--mode", type=int, default=0, help="0:nomal tetris, 1:single learning, 2~:multiple learning")
+    parser.add_argument("-w","--width" , type=int, default=10)
+    parser.add_argument("-h","--height", type=int, default=15)
+    parser.add_argument("--model", type=str, default='')
+    args = parser.parse_args()
 
-#   tetris = Tetris([10,15])
-#   tetris.start()
-    start_learning()
+    gpu_flag = args.gpu
+    if gpu_flag >= 0:
+        cuda.check_cuda_available()
+        chainer.Function.type_check_enable = False
+        cuda.get_device(gpu_flag).use()
+        xp = cuda.cupy
+    else:
+        xp = np
+
+    tetris_size = [args.width, args.height]
+    if args.mode == 0:
+        tetris = Tetris(tetris_size, args.half)
+        tetris.start()
+    else:
+        start_learning(tetris_size, args.half, args.mode)
+
