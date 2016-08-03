@@ -9,6 +9,7 @@ import msvcrt
 import random
 import argparse
 import pickle
+import matplotlib.pyplot as plt
 
 import math
 import numpy as np
@@ -78,9 +79,10 @@ class Agent():
         # 学習関連のパラメータ
         self.batch_num = 32
         self.gamma = 0.99
-        self.loss = 0.0
         self.initial_exploration = 10**4
         self.target_model_update_freq = 10**4
+
+        self.loss_list = []
         
     class Container():
         def __init__(self, field_size, frame_num, prev_action_num):
@@ -157,7 +159,7 @@ class Agent():
         tmp = self.model_target.predict(s_dash)
         tmp = list(map(xp.max, tmp.data))
         max_Q_dash = xp.asanyarray(tmp,dtype=xp.float32)
-        target = xp.asanyarray(Q.data,dtype=xp.float32)
+        target = xp.asanyarray(copy.deepcopy(Q.data),dtype=xp.float32)
 
         for i in range(self.batch_num):
             tmp_ = xp.sign(reward[i]) + self.gamma * max_Q_dash[i]
@@ -174,9 +176,15 @@ class Agent():
         self.model.zerograds()
         
         loss = F.mean_squared_error(td_clip, zero_val)
-        self.loss = loss.data
+#       t = Variable(target)
+#       loss = F.mean_squared_error(t, Q)
         loss.backward()
         self.optimizer.update()
+
+        self.loss_list.append(loss.data.tolist())
+        x = range(len(self.loss_list))
+        plt.plot(self.loss_list)
+        plt.pause(0.01)
 
     def target_model_update(self):
         self.model_target = copy.deepcopy(self.model)
@@ -206,7 +214,7 @@ class Drawer():
         
     def draw_line(self, line):
         if not self.is_draw:return
-        
+
         for c in line:
             if isinstance(c, list):
                 for c_ in c:self.print(c_)
@@ -319,7 +327,7 @@ class Tetris:
         action = Tetris.agent.get_action(s, True)
         self.container.push_prev_actions(action)
 
-        # 報酬計算(とりあえず点数の差分)
+        # 前回の行動による報酬計算(とりあえず点数の差分)
         self.reward += self.score - self.pre_score
         Tetris.total_score += self.score - self.pre_score
         self.pre_score = self.score
@@ -376,6 +384,9 @@ class Tetris:
         for row in field:
 #           self.drawer.draw_line(" " + "".join(row))
             self.drawer.draw_line(row)
+
+        self.drawer.draw_line("")
+        self.drawer.draw_line("Press 'q' key if you want to exit.")
 
     def draw_gameover(self):
         GO = list("GameOver") if self.is_half else list("ＧａｍｅＯｖｅｒ")
@@ -618,10 +629,12 @@ def start_learning(tetris_size, is_half, num_of_tetris):
             pickle.dump(Tetris.agent.model.to_cpu(), f)
 
 if __name__ == "__main__":
-
+    plt.plot([0.0])
+    plt.pause(0.01)
+    
     parser = argparse.ArgumentParser(add_help=False, description = "TETRIS")
     parser.add_argument("--help", action="help")
-    parser.add_argument("-g","--gpu",type=int,default=0)
+    parser.add_argument("-g","--gpu",type=int,default=-1)
     parser.add_argument("--half", type=bool, default=False)
     parser.add_argument("--mode", type=int, default=0, help="0:nomal tetris, 1:single learning, 2~:multiple learning")
     parser.add_argument("-w","--width" , type=int, default=10)
