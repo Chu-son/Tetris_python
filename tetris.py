@@ -216,8 +216,8 @@ class Tetris:
 
     def start(self):
 #       print("\033[2", end = '')
-        print("\033[0;0H", end = '')
-        print("\033[2J", end = '')
+#       print("\033[0;0H", end = '')
+#       print("\033[2J", end = '')
         self.start_wait_key()
         self.draw_field(self.field)
         
@@ -233,6 +233,7 @@ class Tetris:
             self.row = 0
             self.tmp_field = self.get_next_field()
             while self.row <= self.field_info[1] - self.block_size[1]:
+                input()
                 self.nowtime = time.time()
                 if self.nowtime - self.pretime > self.speed:
                     self.row += 1
