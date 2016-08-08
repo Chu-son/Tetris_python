@@ -83,6 +83,8 @@ class Agent():
         self.target_model_update_freq = 10**4
 
         self.loss_list = []
+
+        self.is_draw_graph = False
         
     class Container():
         def __init__(self, field_size, frame_num, prev_action_num):
@@ -182,9 +184,7 @@ class Agent():
         self.optimizer.update()
 
         self.loss_list.append(loss.data.tolist())
-        x = range(len(self.loss_list))
-        plt.plot(self.loss_list)
-        plt.pause(0.01)
+        self.draw_graph(self.loss_list)
 
     def target_model_update(self):
         self.model_target = copy.deepcopy(self.model)
@@ -194,6 +194,13 @@ class Agent():
 
     def action_to_index(self, action):
         return self.actions.index(action)
+
+    def draw_graph(self, plotlist):
+        if not self.is_draw_graph:
+            plt.close()
+            return
+        plt.plot(plotlist, 'g')
+        plt.pause(0.01)
         
 #描画を管理するクラス
 class Drawer():
@@ -251,6 +258,10 @@ class Tetris:
             if s in 'q':
                 Tetris.end_flag = 1
                 stop_flag = True
+
+            if s in 'g':
+                if Tetris.agent == None:return
+                Tetris.agent.is_draw_graph = not Tetris.agent.is_draw_graph
 
     @classmethod
     def cm_start_wait_key(cls):
@@ -631,6 +642,7 @@ def start_learning(tetris_size, is_half, num_of_tetris):
 if __name__ == "__main__":
     plt.plot([0.0])
     plt.pause(0.01)
+    plt.close()
     
     parser = argparse.ArgumentParser(add_help=False, description = "TETRIS")
     parser.add_argument("--help", action="help")
