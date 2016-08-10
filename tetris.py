@@ -85,6 +85,7 @@ class Agent():
         self.loss_list = []
 
         self.is_draw_graph = False
+        self.is_train = True
         
     class Container():
         def __init__(self, field_size, frame_num, prev_action_num):
@@ -118,18 +119,21 @@ class Agent():
         return action_index
         
     def reduce_epsilon(self):
+        if not self.is_train:return
         self.epsilon -= 1.0/10**6
         self.epsilon = max(0.1, self.epsilon) 
         
-    def get_action(self,state,train):
+    def get_action(self,state):
         action = 0
-        if train==True and np.random.random() < self.epsilon:
+        if self.is_train == True and np.random.random() < self.epsilon:
             action_index = np.random.randint(len(self.actions))
         else:
-            action_index = cuda.to_cpu(self.get_greedy_action(state))
+            action_index = cuda.to_cpu(self.get_greedy_action(state)) if gpu_flag >= 0 else self.get_greedy_action(state)
         return self.actions[action_index]
 
     def experience(self, prev_state, action, reward, state):
+        if not self.is_train:return
+
         if self.memPos < self.memSize:
             index = int(self.memPos%self.memSize)
             
@@ -148,6 +152,8 @@ class Agent():
             self.eMem[3][index] = state
 
     def update_model(self):
+        if not self.is_train:return
+
         batch_index = np.random.permutation(self.memSize)[:self.batch_num]
         prev_state  = xp.array(self.eMem[0][batch_index], dtype=xp.float32)
         action      = xp.array(self.eMem[1][batch_index], dtype=xp.float32)
@@ -263,6 +269,10 @@ class Tetris:
                 if Tetris.agent == None:return
                 Tetris.agent.is_draw_graph = not Tetris.agent.is_draw_graph
 
+            if s in 't':
+                if Tetris.agent == None:return
+                Tetris.agent.is_train = not Tetris.agent.is_train
+
     @classmethod
     def cm_start_wait_key(cls):
         Tetris.thread = threading.Thread(target = Tetris.cm_wait_key_thread)
@@ -335,13 +345,16 @@ class Tetris:
 #                   self.container.prevActions.reshape(1,-1))).astype(np.float32)
         self.state = np.hstack(self.container.seq.reshape(1,-1)).astype(np.float32)
         s = cuda.to_gpu(self.state) if gpu_flag >= 0 else self.state
-        action = Tetris.agent.get_action(s, True)
+        action = Tetris.agent.get_action(s)
         self.container.push_prev_actions(action)
 
         # 前回の行動による報酬計算(とりあえず点数の差分)
-        self.reward += self.score - self.pre_score
-        Tetris.total_score += self.score - self.pre_score
-        self.pre_score = self.score
+        if Tetris.agent.is_train:
+            self.reward += self.score - self.pre_score
+            Tetris.total_score += self.score - self.pre_score
+            self.pre_score = self.score
+
+            Tetris.times += 1
         
         # Learning Step
         Tetris.agent.experience(
@@ -353,8 +366,7 @@ class Tetris:
         self.container.prevState = self.state.copy()
         self.container.prevActon = action
 
-        self.reward = 0
-        Tetris.times += 1
+        self.reward = -5
         
         return action
 
@@ -386,7 +398,7 @@ class Tetris:
         #行数合わせ
         for _ in range(4-len(self.next_block)):
             self.drawer.draw_line("")
-        mem = str(Tetris.agent.memPos) if Tetris.agent != None else ''
+        mem = str(Tetris.agent.is_train) if Tetris.agent != None else ''
         self.drawer.draw_line(mem)
         ep = str(Tetris.agent.epsilon) if Tetris.agent != None else ''
         self.drawer.draw_line(ep)
