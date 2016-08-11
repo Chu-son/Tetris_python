@@ -596,6 +596,7 @@ class Tetris:
         self.tmp_field = self.get_next_field()
 
     def move_blocks(self):
+        if not self.drawer.is_draw and Tetris.agent != None and not Tetris.agent.is_train:return
         self.nowtime = time.time()
         if self.nowtime - self.pretime > self.speed:
             self.row += 1
@@ -648,8 +649,12 @@ def start_learning(tetris_size, is_half, num_of_tetris):
 
     is_save_model = input("Do you want to save ?(y/n) => ")
     if 'y' in is_save_model or is_save_model == '':
-        with open("model.mymodel", "wb") as f:
+        f_name = input("File name => ")
+        f_name = "tetris" if f_name == "" else f_name
+        with open(f_name + ".mymodel", "wb") as f:
             pickle.dump(Tetris.agent.model.to_cpu(), f)
+        with open(f_name + ".myexp", "wb") as f:
+            pickle.dump(Tetris.agent.eMem, f)
 
 if __name__ == "__main__":
     plt.plot([0.0])
