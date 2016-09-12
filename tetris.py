@@ -341,9 +341,13 @@ class Tetris:
     def ai_get_action(self):
         # Update States
         self.container.push_s(self.tmp_field)
-#       self.state = np.hstack((self.container.seq.reshape(1,-1), 
-#                   self.container.prevActions.reshape(1,-1))).astype(np.float32)
-        self.state = np.hstack(self.container.seq.reshape(1,-1)).astype(np.float32)
+
+        if len(self.container.prevActions) != 0:
+            self.state = np.hstack((self.container.seq.reshape(1,-1), 
+                                    self.container.prevActions.reshape(1,-1))).astype(np.float32)
+        else:
+            self.state = np.hstack(self.container.seq.reshape(1,-1)).astype(np.float32)
+
         s = cuda.to_gpu(self.state) if gpu_flag >= 0 else self.state
         action = Tetris.agent.get_action(s)
         self.container.push_prev_actions(action)
