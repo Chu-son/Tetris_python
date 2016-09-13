@@ -20,8 +20,7 @@ import chainer.functions as F
 class Q(Chain):
     def __init__(self, state_dim, action_num ):
         super(Q, self).__init__(
-            l1=F.Linear(state_dim, 1000),
-            l2=F.Linear(1000, 512),
+            l1=F.Linear(state_dim, 512),
             q_value=F.Linear(512, action_num)
         )
     def __call__(self, x, t):
@@ -29,15 +28,14 @@ class Q(Chain):
         
     def predict(self, x, train = False):
         h1 = F.leaky_relu(self.l1(x))
-        h2 = F.leaky_relu(self.l2(h1))
-        y = self.q_value(h2)
+        y = self.q_value(h1)
         return y
 
 
 class Agent():
     def __init__(self, field, epsilon = 1.0):
         self.FRAME_NUM = 1
-        self.PREV_ACTIONS_NUM = 0
+        self.PREV_ACTIONS_NUM = 1
         self.FIELD_SIZE = [len(field[0]), len(field)]
         self.STATE_DIM = self.FIELD_SIZE[0] * self.FIELD_SIZE[1] * self.FRAME_NUM + self.PREV_ACTIONS_NUM
         
@@ -58,7 +56,7 @@ class Agent():
         
         # 経験関連
         self.memPos = 0 
-        self.memSize = 10**4
+        self.memSize = 10**5
         self.eMem = [np.zeros((self.memSize,self.STATE_DIM), dtype=np.float32),
                      np.zeros((self.memSize,1), dtype=np.float32),
                      np.zeros((self.memSize,1), dtype=np.float32),
@@ -67,8 +65,9 @@ class Agent():
         # 学習関連のパラメータ
         self.batch_num = 32
         self.gamma = 0.99
-        self.initial_exploration = 10**2
-        self.target_model_update_freq = 10**2
+        self.initial_exploration = 10**3
+        self.target_model_update_freq = 10**3
+        self.epsilon_decrement = 1.0/10**4
 
         self.loss_list = []
 
@@ -108,7 +107,7 @@ class Agent():
         
     def reduce_epsilon(self):
         if not self.is_train:return
-        self.epsilon -= 1.0/10**4
+        self.epsilon -= self.epsilon_decrement
         self.epsilon = max(0.1, self.epsilon) 
         
     def get_action(self,state):
@@ -215,14 +214,6 @@ RAW_Field = [
 [0,-10,0,0,100],
 ]
 
-
-# 定数
-ALPHA = 0.2 # LEARNING RATIO
-GAMMA  = 0.9 # DISCOUNT RATIO
-E_GREEDY_RATIO = 0.2
-LEARNING_COUNT = 1000
-
-
 class Field(object):
     """ Fieldに関するクラス """
     def __init__(self, raw_field=RAW_Field):
@@ -233,9 +224,9 @@ class Field(object):
     def display(self, point=None):
 
             """ Fieldの情報を出力する. """
-            field = copy.deepcopy(self.field)
+            field = copy.deepcopy(self.get_state())
 
-            print ("----- Dump Field: {} -----".format( str(point)))
+            print ("----- Dump Field: {} -----".format( str(self.now_coord)))
             for line in field:
                     print("\t",end="")
                     for val in line:
@@ -246,19 +237,26 @@ class Field(object):
                     print("\n")
 
     def move(self, direction):
-            """ 引数で指定した座標から移動できる座標リストを獲得する. """
             dx = 0
             dy = 0
+            exception_penalty = 0.0
 
             if direction == 0: dx -= 1
             elif direction == 1: dx += 1
             elif direction == 2: dy -= 1
             elif direction == 3: dy += 1
 
-            if self.field_size[1] >= self.now_coord[1] + dy or self.now_coord[1] + dy < 0: dy = 0
-            if self.field_size[0] >= self.now_coord[0] + dx or self.now_coord[0] + dx < 0: dx = 0
+            if self.field_size[1] <= self.now_coord[1] + dy or self.now_coord[1] + dy < 0: 
+                exception_penalty = -20
+                dy = 0
+            if self.field_size[0] <= self.now_coord[0] + dx or self.now_coord[0] + dx < 0:
+                exception_penalty = -20
+                dx = 0
 
             self.now_coord = ( self.now_coord[0] + dx, self.now_coord[1] + dy ) 
+
+            return self.get_reward() if exception_penalty == 0.0 else exception_penalty
+
 
     def get_reward(self):
             """ 指定した座標のfieldの値を返す. エピソード終了判定もする. """
@@ -272,8 +270,9 @@ class Field(object):
 
     def get_state(self):
             x, y = self.now_coord
-            self.field[y][x] = 1
-            return self.field
+            ret_state = copy.deepcopy(self.field)
+            ret_state[y][x] = 1
+            return ret_state
 
     def get_start_point(self):
             """ Field中の Start地点:"S" の座標を返す """
@@ -295,6 +294,7 @@ class QLearning(object):
         self.Qvalue = {}
         self.Field = map_obj
         self.ep_end_flag = False
+        self.reward = 0.0
 
         self.init_learning()
 
@@ -312,11 +312,12 @@ class QLearning(object):
         #print "----- Episode -----"
         while True:
             action = self.get_action()
-            self.Field.move(action)
+            self.reward = self.Field.move(action)
 
-            if greedy_flg:
+            if greedy_flg or int(QLearning.agent.epsilon * 1.0 / QLearning.agent.epsilon_decrement) % (1.0/QLearning.agent.epsilon_decrement / 10.0) == 0.0:
+                print("action:{}".format(action))
+                print("reward:{}".format(self.reward))
                 self.Field.display(action)
-                print( "\tstate: {} -> action:{}\n").format(state, action)
 
             if self.ep_end_flag:
                 self.update_model()
@@ -339,7 +340,7 @@ class QLearning(object):
         self.container.push_prev_actions(action)
 
         # 前回の行動による報酬計算
-        reward = self.Field.get_reward()
+        reward = self.reward
         if reward > 0: self.ep_end_flag = True
 
         QLearning.times += 1
@@ -366,9 +367,6 @@ class QLearning(object):
 
 
 if __name__ == "__main__":
-    plt.plot([0.0])
-    plt.pause(0.01)
-    plt.close()
     
     parser = argparse.ArgumentParser(add_help=False, description = "TETRIS")
     parser.add_argument("--help", action="help")
