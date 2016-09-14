@@ -17,25 +17,63 @@ import chainer
 from chainer import cuda, optimizers, FunctionSet, Variable, Chain
 import chainer.functions as F
 
+class Drawer():
+    def __init__(self):
+        self.rows = 0
+        self.max_cols = []
+        self.delete_space = ' '
+
+    def draw_char(self, char):
+        if not isinstance(char, str):
+            char = str(char)
+        if char in '\n': self.rows += 1
+
+        print(char, end = '')
+
+    def draw_line(self, line):
+        if not isinstance(line, str):
+            line = str(line)
+        for c in line:
+            self.draw_char(c)
+
+        if len(self.max_cols) - 1 >= self.rows:
+            print(self.delete_space * self.max_cols[self.rows], end = '')
+            self.max_cols[self.rows] = len(line)
+        else:
+            self.max_cols.append(len(line))
+
+        print('')
+        self.rows += 1
+
+    def reset(self):
+        print("\033[{}A".format(self.rows), end = '')
+        self.rows = 0
+
 class Q(Chain):
     def __init__(self, state_dim, action_num ):
         super(Q, self).__init__(
             l1=F.Linear(state_dim, 512),
+            l2=F.Linear(512, 1024),
+            l3=F.Linear(1024, 512),
             q_value=F.Linear(512, action_num)
         )
     def __call__(self, x, t):
         return F.mean_squared_error(self.predict(x, train=True), t)
         
     def predict(self, x, train = False):
-        h1 = F.leaky_relu(self.l1(x))
-        y = self.q_value(h1)
+        h1 = F.dropout(F.relu(self.l1(x)),train=train)
+        h2 = F.dropout(F.relu(self.l2(h1)),train=train)
+        h3 = F.dropout(F.relu(self.l3(h2)),train=train)
+        y = self.q_value(h3)
         return y
 
 
 class Agent():
     def __init__(self, field, epsilon = 1.0):
-        self.FRAME_NUM = 1
-        self.PREV_ACTIONS_NUM = 1
+
+        self.FRAME_NUM = 1 #過去何フレームの状態を記憶するか
+        self.PREV_ACTIONS_NUM = self.FRAME_NUM # 過去何回の行動を記憶するか
+
         self.FIELD_SIZE = [len(field[0]), len(field)]
         self.STATE_DIM = self.FIELD_SIZE[0] * self.FIELD_SIZE[1] * self.FRAME_NUM + self.PREV_ACTIONS_NUM
         
@@ -56,7 +94,7 @@ class Agent():
         
         # 経験関連
         self.memPos = 0 
-        self.memSize = 10**5
+        self.memSize = 10**6
         self.eMem = [np.zeros((self.memSize,self.STATE_DIM), dtype=np.float32),
                      np.zeros((self.memSize,1), dtype=np.float32),
                      np.zeros((self.memSize,1), dtype=np.float32),
@@ -65,8 +103,8 @@ class Agent():
         # 学習関連のパラメータ
         self.batch_num = 32
         self.gamma = 0.99
-        self.initial_exploration = 10**3
-        self.target_model_update_freq = 10**3
+        self.initial_exploration = 10**4
+        self.target_model_update_freq = 10**4
         self.epsilon_decrement = 1.0/10**4
 
         self.loss_list = []
@@ -99,7 +137,7 @@ class Agent():
 
     def get_action_value(self, state):
         x = Variable(state.reshape((1, -1)))
-        return self.model.predict(x).data[0]
+        return self.model.predict(x, self.is_train).data[0]
         
     def get_greedy_action(self, state):
         action_index = np.argmax(self.get_action_value(state))
@@ -196,15 +234,6 @@ class Agent():
         plt.pause(0.01)
         
 
-def start_learning():
-    # create QLearning object
-    QL = QLearning(Field())
-    # Learning Phase
-    while QL.agent.epsilon > 0.1:
-        QL.learn() # Learning 1 episode
-    # After Learning
-    QL.learn(greedy_flg=True) # 学習結果をgreedy法で行動選択させてみる
-
 # "S": Start地点, "#": 壁, "数値": 報酬
 RAW_Field = [
 [0,0,0,-10,0],
@@ -221,20 +250,20 @@ class Field(object):
             self.field_size = (len(self.field[0]),len(self.field))
             self.now_coord = self.get_start_point()
 
-    def display(self, point=None):
+    def display(self, point=None, drawer = Drawer()):
 
             """ Fieldの情報を出力する. """
             field = copy.deepcopy(self.get_state())
 
-            print ("----- Dump Field: {} -----".format( str(self.now_coord)))
+            drawer.draw_line ("----- Dump Field: {} -----".format( str(self.now_coord)))
             for line in field:
-                    print("\t",end="")
+                    drawer.draw_char("\t")
                     for val in line:
-                        if val == 1: print('@' ,end = "") 
-                        elif val < 0: print('#' ,end = "") 
-                        elif val > 0: print('G' ,end = "") 
-                        else: print('_' ,end = "") 
-                    print("\n")
+                        if val == 1: drawer.draw_char('@') 
+                        elif val < 0: drawer.draw_char('#') 
+                        elif val > 0: drawer.draw_char('G') 
+                        else: drawer.draw_char('_') 
+                    drawer.draw_line("")
 
     def move(self, direction):
             dx = 0
@@ -259,7 +288,6 @@ class Field(object):
 
 
     def get_reward(self):
-            """ 指定した座標のfieldの値を返す. エピソード終了判定もする. """
             x, y = self.now_coord
             try:
                      return float(self.field[y][x])
@@ -296,11 +324,14 @@ class QLearning(object):
         self.ep_end_flag = False
         self.reward = 0.0
 
+        self.drawer = Drawer()
+
         self.init_learning()
 
     def init_learning(self):
         if QLearning.agent == None:
-            QLearning.agent = Agent(self.Field.get_state())
+            #QLearning.agent = Agent(self.Field.get_state())
+            QLearning.agent = Agent([self.Field.now_coord])
         self.container = QLearning.agent.get_container()
 
     def learn(self, greedy_flg=False):
@@ -309,25 +340,29 @@ class QLearning(object):
         self.ep_end_flag = False
         if greedy_flg: QLearning.agent.is_train = False
 
-        #print "----- Episode -----"
+        count = 0
         while True:
+            self.drawer.reset()
+            count += 1
             action = self.get_action()
             self.reward = self.Field.move(action)
 
-            if greedy_flg or int(QLearning.agent.epsilon * 1.0 / QLearning.agent.epsilon_decrement) % (1.0/QLearning.agent.epsilon_decrement / 10.0) == 0.0:
-                print("action:{}".format(action))
-                print("reward:{}".format(self.reward))
-                self.Field.display(action)
+            #if greedy_flg or int(QLearning.agent.epsilon * 1.0 / QLearning.agent.epsilon_decrement) % (1.0/QLearning.agent.epsilon_decrement / 10.0) == 0.0:
+            self.drawer.draw_line("action:{}".format(action))
+            self.drawer.draw_line("reward:{}".format(self.reward))
+            self.drawer.draw_line("action count:{}".format(count))
+            self.Field.display(action, self.drawer)
 
             if self.ep_end_flag:
                 self.update_model()
                 e = QLearning.agent.epsilon
-                print(e)
+                self.drawer.draw_line(e)
                 break # finish this episode
 
     def get_action(self):
         # Update States
-        self.container.push_s(self.Field.get_state())
+        #self.container.push_s(self.Field.get_state())
+        self.container.push_s([self.Field.now_coord])
 
         if len(self.container.prevActions) != 0:
             self.state = np.hstack((self.container.seq.reshape(1,-1), 
@@ -365,10 +400,19 @@ class QLearning(object):
         if QLearning.agent.initial_exploration < QLearning.times and QLearning.times % QLearning.agent.target_model_update_freq == 0:
             QLearning.agent.target_model_update()
 
+def start_learning():
+    print("\n\n")
+    # create QLearning object
+    QL = QLearning(Field())
+    # Learning Phase
+    while QL.agent.epsilon > 0.1:
+        QL.learn() # Learning 1 episode
+    # After Learning
+    QL.learn(greedy_flg=True) # 学習結果をgreedy法で行動選択させてみる
 
 if __name__ == "__main__":
     
-    parser = argparse.ArgumentParser(add_help=False, description = "TETRIS")
+    parser = argparse.ArgumentParser(add_help=False, description = "MAZE Q-Learning")
     parser.add_argument("--help", action="help")
     parser.add_argument("-g","--gpu",type=int,default=-1)
     parser.add_argument("--half", type=bool, default=False)
