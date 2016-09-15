@@ -52,19 +52,26 @@ class Drawer():
 class Q(Chain):
     def __init__(self, state_dim, action_num ):
         super(Q, self).__init__(
-            l1=F.Linear(state_dim, 512),
-            l2=F.Linear(512, 1024),
-            l3=F.Linear(1024, 512),
-            q_value=F.Linear(512, action_num)
+#           l1=F.Linear(state_dim, 32),
+#           l2=F.Linear(32, 256),
+#           l3=F.Linear(256, 512),
+#           l4=F.Linear(512, 1024),
+#           q_value=F.Linear(1024, action_num)
+            l1=F.Linear(state_dim, 128),
+            q_value=F.Linear(128, action_num)
         )
     def __call__(self, x, t):
         return F.mean_squared_error(self.predict(x, train=True), t)
         
     def predict(self, x, train = False):
-        h1 = F.dropout(F.relu(self.l1(x)),train=train)
-        h2 = F.dropout(F.relu(self.l2(h1)),train=train)
-        h3 = F.dropout(F.relu(self.l3(h2)),train=train)
-        y = self.q_value(h3)
+#       h2 = F.dropout(F.relu(self.l2(h1)),train=train)
+#       h1 = F.leaky_relu(self.l1(x))
+#       h2 = F.leaky_relu(self.l2(h1))
+#       h3 = F.leaky_relu(self.l3(h2))
+#       h4 = F.leaky_relu(self.l4(h3))
+#       y = self.q_value(h4)
+        h1 = F.leaky_relu(self.l1(x))
+        y = self.q_value(h1)
         return y
 
 
@@ -81,20 +88,24 @@ class Agent():
         self.actions = range(4) # 前後左右移動
         
         # DQN Model
+        print("Network")
+        print("In:{}".format(self.STATE_DIM))
+        print("Out:{}\n".format(len(self.actions)))
         self.model = Q(self.STATE_DIM, len(self.actions))
         if gpu_flag >= 0:
             self.model.to_gpu()
 
         self.model_target = copy.deepcopy(self.model)
 
-        self.optimizer = optimizers.RMSpropGraves(lr=0.00025,alpha=0.95,momentum=0.95,eps=0.0001)
+#       self.optimizer = optimizers.RMSpropGraves(lr=0.00025,alpha=0.95,momentum=0.95,eps=0.0001)
+        self.optimizer = optimizers.Adam()
         self.optimizer.setup(self.model)
         
         self.epsilon = epsilon
         
         # 経験関連
         self.memPos = 0 
-        self.memSize = 10**6
+        self.memSize = 10**5
         self.eMem = [np.zeros((self.memSize,self.STATE_DIM), dtype=np.float32),
                      np.zeros((self.memSize,1), dtype=np.float32),
                      np.zeros((self.memSize,1), dtype=np.float32),
@@ -103,8 +114,8 @@ class Agent():
         # 学習関連のパラメータ
         self.batch_num = 32
         self.gamma = 0.99
-        self.initial_exploration = 10**4
-        self.target_model_update_freq = 10**4
+        self.initial_exploration = 10**3
+        self.target_model_update_freq = 10**3
         self.epsilon_decrement = 1.0/10**4
 
         self.loss_list = []
@@ -210,7 +221,7 @@ class Agent():
         
         loss = F.mean_squared_error(td_clip, zero_val)
 #       t = Variable(target)
-#       loss = F.mean_squared_error(t, Q)
+#       loss = F.mean_squared_error(Q, t)
         loss.backward()
         self.optimizer.update()
 
@@ -236,11 +247,11 @@ class Agent():
 
 # "S": Start地点, "#": 壁, "数値": 報酬
 RAW_Field = [
-[0,0,0,-10,0],
-[0,-10,0,0,0],
-[0,-10,0,-10,0],
-[0,0,0,-10,0],
-[0,-10,0,0,100],
+[0,0,0,-0.5,0],
+[0,-0.5,0,0,0],
+[0,-0.5,0,-0.5,0],
+[0,0,0,-0.5,0],
+[0,-0.5,0,0,1.0],
 ]
 
 class Field(object):
@@ -249,6 +260,7 @@ class Field(object):
             self.field = raw_field
             self.field_size = (len(self.field[0]),len(self.field))
             self.now_coord = self.get_start_point()
+            self.player_val = 0.01
 
     def display(self, point=None, drawer = Drawer()):
 
@@ -259,7 +271,7 @@ class Field(object):
             for line in field:
                     drawer.draw_char("\t")
                     for val in line:
-                        if val == 1: drawer.draw_char('@') 
+                        if val == self.player_val: drawer.draw_char('@') 
                         elif val < 0: drawer.draw_char('#') 
                         elif val > 0: drawer.draw_char('G') 
                         else: drawer.draw_char('_') 
@@ -276,10 +288,10 @@ class Field(object):
             elif direction == 3: dy += 1
 
             if self.field_size[1] <= self.now_coord[1] + dy or self.now_coord[1] + dy < 0: 
-                exception_penalty = -20
+                exception_penalty = -1.0
                 dy = 0
             if self.field_size[0] <= self.now_coord[0] + dx or self.now_coord[0] + dx < 0:
-                exception_penalty = -20
+                exception_penalty = -1.0
                 dx = 0
 
             self.now_coord = ( self.now_coord[0] + dx, self.now_coord[1] + dy ) 
@@ -299,7 +311,7 @@ class Field(object):
     def get_state(self):
             x, y = self.now_coord
             ret_state = copy.deepcopy(self.field)
-            ret_state[y][x] = 1
+            ret_state[y][x] = self.player_val
             return ret_state
 
     def get_start_point(self):
@@ -341,11 +353,13 @@ class QLearning(object):
         if greedy_flg: QLearning.agent.is_train = False
 
         count = 0
+        total_reward = 0
         while True:
             self.drawer.reset()
             count += 1
             action = self.get_action()
             self.reward = self.Field.move(action)
+            total_reward += self.reward
 
             #if greedy_flg or int(QLearning.agent.epsilon * 1.0 / QLearning.agent.epsilon_decrement) % (1.0/QLearning.agent.epsilon_decrement / 10.0) == 0.0:
             self.drawer.draw_line("action:{}".format(action))
@@ -357,6 +371,8 @@ class QLearning(object):
                 self.update_model()
                 e = QLearning.agent.epsilon
                 self.drawer.draw_line(e)
+                self.drawer.draw_line(total_reward)
+                self.drawer.draw_line(count)
                 break # finish this episode
 
     def get_action(self):
@@ -388,7 +404,7 @@ class QLearning(object):
                     self.state
                 )
         self.container.prevState = self.state.copy()
-        self.container.prevActon = action
+        self.container.prevAction = action
         
         return action
 
@@ -405,7 +421,8 @@ def start_learning():
     # create QLearning object
     QL = QLearning(Field())
     # Learning Phase
-    while QL.agent.epsilon > 0.1:
+#   while QL.agent.epsilon > 0.1:
+    while True:
         QL.learn() # Learning 1 episode
     # After Learning
     QL.learn(greedy_flg=True) # 学習結果をgreedy法で行動選択させてみる

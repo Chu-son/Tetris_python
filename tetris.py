@@ -28,10 +28,10 @@ def print_23(s = '', end = None):
 class Q(Chain):
     def __init__(self, state_dim, action_num ):
         super(Q, self).__init__(
-            l1=F.Linear(state_dim, 3000),
-            l2=F.Linear(3000, 3000),
-            l3=F.Linear(3000, 3000),
-            l4=F.Linear(3000, 512),
+            l1=F.Linear(state_dim, 512),
+            l2=F.Linear(512, 2048),
+            l3=F.Linear(2048, 2048),
+            l4=F.Linear(2048, 512),
             q_value=F.Linear(512, action_num)
         )
     def __call__(self, x, t):
@@ -49,7 +49,8 @@ class Q(Chain):
 class Agent():
     def __init__(self, field, epsilon = 1.0):
         self.FRAME_NUM = 1
-        self.PREV_ACTIONS_NUM = 0
+        self.PREV_ACTIONS_NUM = self.FRAME_NUM
+
         self.FIELD_SIZE = [len(field[0]), len(field)]
         self.STATE_DIM = self.FIELD_SIZE[0] * self.FIELD_SIZE[1] * self.FRAME_NUM + self.PREV_ACTIONS_NUM
         
@@ -57,6 +58,9 @@ class Agent():
         self.actions = range(-3, 5) # 左右移動(最大2),回転,スキップ
         
         # DQN Model
+        print("Network")
+        print("In:{}".format(self.STATE_DIM))
+        print("Out:{}\n".format(len(self.actions)))
         self.model = Q(self.STATE_DIM, len(self.actions))
         if gpu_flag >= 0:
             self.model.to_gpu()
@@ -64,13 +68,14 @@ class Agent():
         self.model_target = copy.deepcopy(self.model)
 
         self.optimizer = optimizers.RMSpropGraves(lr=0.00025,alpha=0.95,momentum=0.95,eps=0.0001)
+#       self.optimizer = optimizers.Adam()
         self.optimizer.setup(self.model)
         
         self.epsilon = epsilon
         
         # 経験関連
         self.memPos = 0 
-        self.memSize = 10**5
+        self.memSize = 10**6
         self.eMem = [np.zeros((self.memSize,self.STATE_DIM), dtype=np.float32),
                      np.zeros((self.memSize,1), dtype=np.float32),
                      np.zeros((self.memSize,1), dtype=np.float32),
@@ -81,6 +86,8 @@ class Agent():
         self.gamma = 0.99
         self.initial_exploration = 10**4
         self.target_model_update_freq = 10**4
+        self.epsilon_decrement = 1.0 / 10**6
+        self.min_epsilon = 0.1
 
         self.loss_list = []
 
@@ -120,12 +127,14 @@ class Agent():
         
     def reduce_epsilon(self):
         if not self.is_train:return
-        self.epsilon -= 1.0/10**6
-        self.epsilon = max(0.1, self.epsilon) 
+        self.epsilon -= self.epsilon_decrement
+        self.epsilon = max(self.min_epsilon, self.epsilon) 
         
     def get_action(self,state):
         action = 0
-        if self.is_train == True and np.random.random() < self.epsilon:
+        ep = self.epsilon if self.is_train else self.min_epsilon
+
+        if np.random.random() < ep:
             action_index = np.random.randint(len(self.actions))
         else:
             action_index = cuda.to_cpu(self.get_greedy_action(state)) if gpu_flag >= 0 else self.get_greedy_action(state)
@@ -247,6 +256,41 @@ class Drawer():
         print_23("\033[{}A".format(self.rows),end="")
         self.rows = 0
 
+class RewardCalculator():
+    def __init__(self):
+        self.reset()
+
+        max_point = 4 # 一回のアクションで獲得できる最大ポイント
+        self.base_reward = 1.0 / max_point # 1ポイント分の報酬.最大ポイントで1.0になる
+
+    def exception(self):
+        self.exception_penalty_flag = True
+
+    def gameover(self):
+        self.gameover_penalty_flag = True
+
+    def add_point(self, point = 1):
+        self.total_point += point
+
+    def get_reward(self):
+        reward = 0
+        if self.gameover_penalty_flag:
+            reward = -1.0
+        elif self.exception_penalty_flag:
+            reward = -0.5
+        else:
+            reward = self.total_point * self.base_reward
+
+        self.reset()
+        return reward
+
+    def reset(self):
+        self.exception_penalty_flag = False
+        self.gameover_penalty_flag = False
+        
+        self.total_point = 0
+
+
 # テトリスクラス
 class Tetris:
     # クラス変数
@@ -324,8 +368,8 @@ class Tetris:
         self.speed = self.default_speed
 
         self.action = 0
-        self.reward = 0
-        
+        self.rewardCalclator = RewardCalculator()
+
         self.pretime = time.time()
         self.blockcount = 0
 
@@ -352,26 +396,23 @@ class Tetris:
         action = Tetris.agent.get_action(s)
         self.container.push_prev_actions(action)
 
-        # 前回の行動による報酬計算(とりあえず点数の差分)
+        # 前回の行動による報酬計算
         if Tetris.agent.is_train:
-            self.reward += self.score - self.pre_score
+            reward = self.rewardCalclator.get_reward()
             Tetris.total_score += self.score - self.pre_score
             self.pre_score = self.score
 
             Tetris.times += 1
         
-        # Learning Step
-        Tetris.agent.experience(
-                    self.container.prevState,
-                    self.container.prevAction,
-                    self.reward,
-                    self.state
-                )
+            Tetris.agent.experience(
+                        self.container.prevState,
+                        self.container.prevAction,
+                        reward,
+                        self.state
+                    )
         self.container.prevState = self.state.copy()
-        self.container.prevActon = action
+        self.container.prevAction = action
 
-        self.reward = -5
-        
         return action
 
     def is_hit(self, block_pos):
@@ -456,6 +497,8 @@ class Tetris:
                 ret.append(row)
         ret.append(self.field[-1])
         self.score += deleteCount * 10
+        self.rewardCalclator.add_point(deleteCount)
+
         return [self.new_line() for _ in range(deleteCount)] + ret
 
     def wait_key_thread(self):
@@ -488,19 +531,24 @@ class Tetris:
                 self.movement = action
             self.action = action
 
+        # 回転できるか
         self.block, self.block_size = self.get_block_size( self.rotate_block(self.block, self.rotate_flag))
         if self.is_hit( [rows[self.pos : self.block_size[0] + self.pos] 
                         for rows in self.field[self.row:self.row + self.block_size[1]]] ) \
                                 or self.block_size[1] + self.row > self.field_info[1]: 
+
             self.block, self.block_size = self.get_block_size( self.rotate_block(self.block, 
                     1 if self.rotate_flag == 2 else 2 if self.rotate_flag == 1 else 0))
+            self.rewardCalclator.exception()
 
+        # 移動できるか
         if self.pos + self.movement >= 0 \
                 and self.pos + self.movement <= self.field_info[0] - self.block_size[0] + 1\
                 and not self.is_hit(
                         [rows[self.pos + self.movement : self.block_size[0] + self.pos+self.movement] 
                             for rows in self.field[ self.row : self.row + self.block_size[1] ]] ):
             self.pos += self.movement
+        else: self.rewardCalclator.exception()
 
         if self.skip_flag:
             #while is_hit(get_block_size()):
@@ -605,7 +653,7 @@ class Tetris:
         if self.nowtime - self.pretime > self.speed:
             self.row += 1
             self.pretime = self.nowtime
-        self.wait_key()
+        self.wait_key() # AIの行動決定等もここでやる
         
         # ブロックの当たり判定
         hit_flag = False
@@ -630,7 +678,7 @@ class Tetris:
             if self.is_gameover():
                 self.field = self.new_field()
                 self.speed = self.default_speed
-                self.reward -= 10
+                self.rewardCalclator.gameover()
                 return False
         return True
 
