@@ -295,7 +295,8 @@ class RewardCalculator():
 class Tetris:
     # クラス変数
     agent = None
-    times = 0
+    experience_times = 0
+    model_update_times = 0
     total_score = 0
     end_flag = 0
 
@@ -326,10 +327,11 @@ class Tetris:
     @classmethod
     def cm_ai_learning(cls):
         Tetris.agent.update_model()
+        Tetris.model_update_times += 1
 
-        if Tetris.agent.initial_exploration < Tetris.times:
+        if Tetris.agent.initial_exploration < Tetris.experience_times:
             Tetris.agent.reduce_epsilon()
-        if Tetris.agent.initial_exploration < Tetris.times and Tetris.times % Tetris.agent.target_model_update_freq == 0:
+        if Tetris.agent.initial_exploration < Tetris.experience_times and Tetris.model_update_times % Tetris.agent.target_model_update_freq == 0:
             Tetris.agent.target_model_update()
 
     # インスタンスメソッド
@@ -402,7 +404,7 @@ class Tetris:
             Tetris.total_score += self.score - self.pre_score
             self.pre_score = self.score
 
-            Tetris.times += 1
+            Tetris.experience_times += 1
         
             Tetris.agent.experience(
                         self.container.prevState,

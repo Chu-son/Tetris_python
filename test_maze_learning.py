@@ -14,10 +14,10 @@ import matplotlib.pyplot as plt
 import math
 import numpy as np
 import chainer
-from chainer import cuda, optimizers, FunctionSet, Variable, Chain
+from chainer import cuda, optimizers, FunctionSet, Variable, Chain, serializers
 import chainer.functions as F
 
-class Drawer():
+class Drawer(object):
     def __init__(self):
         self.rows = 0
         self.max_cols = []
@@ -49,33 +49,41 @@ class Drawer():
         print("\033[{}A".format(self.rows), end = '')
         self.rows = 0
 
+class ChainInfo(Chain):
+    def __init__(self, **links):
+        super().__init__(links)
+
+        self.l = links
+
+    def get_chain_info(self):
+        ret = ""
+        for name, link in items(self.l):
+            ret += "{}:({},{})".format(name,link.W[0],link.W[1])
+        return ret
+
 class Q(Chain):
     def __init__(self, state_dim, action_num ):
         super(Q, self).__init__(
-#           l1=F.Linear(state_dim, 32),
-#           l2=F.Linear(32, 256),
-#           l3=F.Linear(256, 512),
-#           l4=F.Linear(512, 1024),
-#           q_value=F.Linear(1024, action_num)
-            l1=F.Linear(state_dim, 128),
-            q_value=F.Linear(128, action_num)
+            l1=F.Linear(state_dim, 256),
+            l2=F.Linear(256, 512),
+            l3=F.Linear(512, 1024),
+            l4=F.Linear(1024, 2048),
+            q_value=F.Linear(2048, action_num)
         )
     def __call__(self, x, t):
         return F.mean_squared_error(self.predict(x, train=True), t)
         
     def predict(self, x, train = False):
 #       h2 = F.dropout(F.relu(self.l2(h1)),train=train)
-#       h1 = F.leaky_relu(self.l1(x))
-#       h2 = F.leaky_relu(self.l2(h1))
-#       h3 = F.leaky_relu(self.l3(h2))
-#       h4 = F.leaky_relu(self.l4(h3))
-#       y = self.q_value(h4)
         h1 = F.leaky_relu(self.l1(x))
-        y = self.q_value(h1)
+        h2 = F.leaky_relu(self.l2(h1))
+        h3 = F.leaky_relu(self.l3(h2))
+        h4 = F.leaky_relu(self.l4(h3))
+        y = self.q_value(h4)
         return y
 
 
-class Agent():
+class Agent(object):
     def __init__(self, field, epsilon = 1.0):
 
         self.FRAME_NUM = 1 #過去何フレームの状態を記憶するか
@@ -116,7 +124,7 @@ class Agent():
         self.gamma = 0.99
         self.initial_exploration = 10**3
         self.target_model_update_freq = 10**3
-        self.epsilon_decrement = 1.0/10**4
+        self.epsilon_decrement = 1.0/10**5
 
         self.loss_list = []
 
@@ -342,8 +350,8 @@ class QLearning(object):
 
     def init_learning(self):
         if QLearning.agent == None:
-            #QLearning.agent = Agent(self.Field.get_state())
-            QLearning.agent = Agent([self.Field.now_coord])
+            QLearning.agent = Agent(self.Field.get_state())
+#           QLearning.agent = Agent([self.Field.now_coord])
         self.container = QLearning.agent.get_container()
 
     def learn(self, greedy_flg=False):
@@ -377,8 +385,8 @@ class QLearning(object):
 
     def get_action(self):
         # Update States
-        #self.container.push_s(self.Field.get_state())
-        self.container.push_s([self.Field.now_coord])
+        self.container.push_s(self.Field.get_state())
+#       self.container.push_s([self.Field.now_coord])
 
         if len(self.container.prevActions) != 0:
             self.state = np.hstack((self.container.seq.reshape(1,-1), 
