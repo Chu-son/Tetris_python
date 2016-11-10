@@ -11,6 +11,7 @@ import argparse
 import pickle
 import matplotlib.pyplot as plt
 
+import re
 import math
 import numpy as np
 import chainer
@@ -51,17 +52,30 @@ class Drawer(object):
 
 class ChainInfo(Chain):
     def __init__(self, **links):
-        super().__init__(links)
+        super().__init__()
 
         self.l = links
 
+        for name, link in self.l.items():
+            self.add_link(name, link)
+
     def get_chain_info(self):
+        links = self._sort_links()
         ret = ""
-        for name, link in items(self.l):
-            ret += "{}:({},{})".format(name,link.W[0],link.W[1])
+        for name, link in links:
+            ret += "{}:({},{})\n".format(name,len(link.W.data[0]),len(link.W.data))
         return ret
 
-class Q(Chain):
+    def _sort_links(self):
+        links = [[name, link] for name, link in self.l.items()]
+        sort_list = [[re.search("[a-z A-Z]*", name).group(), (re.search("[0-9]+", name)), name, link] for name, link in links]
+        sort_list.sort(key = lambda x:(x[0],int(x[1].group())) if x[1] != None else (x[0],0))
+
+        ret_list = [[name, link] for _,_, name, link in sort_list]
+
+        return ret_list
+
+class Q(ChainInfo):
     def __init__(self, state_dim, action_num ):
         super(Q, self).__init__(
             l1=F.Linear(state_dim, 256),
@@ -102,6 +116,8 @@ class Agent(object):
         self.model = Q(self.STATE_DIM, len(self.actions))
         if gpu_flag >= 0:
             self.model.to_gpu()
+
+        print(self.model.get_chain_info())
 
         self.model_target = copy.deepcopy(self.model)
 
@@ -375,7 +391,7 @@ class QLearning(object):
             self.drawer.draw_line("action count:{}".format(count))
             self.Field.display(action, self.drawer)
 
-            if self.ep_end_flag:
+            if self.ep_end_flag or count % 10**3 == 0 :
                 self.update_model()
                 e = QLearning.agent.epsilon
                 self.drawer.draw_line(e)
@@ -430,6 +446,7 @@ def start_learning():
     QL = QLearning(Field())
     # Learning Phase
 #   while QL.agent.epsilon > 0.1:
+    print("\n")
     while True:
         QL.learn() # Learning 1 episode
     # After Learning

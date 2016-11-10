@@ -5,17 +5,56 @@ import sys
 import time
 import copy
 import threading
-import msvcrt
 import random
 import argparse
 import pickle
 import matplotlib.pyplot as plt
 
+import re
 import math
 import numpy as np
 import chainer
 from chainer import cuda, optimizers, FunctionSet, Variable, Chain
 import chainer.functions as F
+
+
+class _Getch:
+    """Gets a single character from standard input.  Does not echo to the
+screen."""
+    def __init__(self):
+        try:
+            self.impl = _GetchWindows()
+        except ImportError:
+            self.impl = _GetchUnix()
+
+    def __call__(self): return self.impl()
+
+
+class _GetchUnix:
+    def __init__(self):
+        import tty, sys
+
+    def __call__(self):
+        import sys, tty, termios
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(sys.stdin.fileno())
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
+
+
+class _GetchWindows:
+    def __init__(self):
+        import msvcrt
+
+    def __call__(self):
+        import msvcrt
+        return msvcrt.getwch()
+
+_getchar = _Getch()
 
 
 # 2系と3系の互換用.endがNoneでなければ改行しない
@@ -25,7 +64,40 @@ def print_23(s = '', end = None):
     else:
         print(s)
 
-class Q(Chain):
+class ChainInfo(Chain):
+    def __init__(self, **links):
+        super().__init__()
+
+        self.l = links
+        self.opt = ''
+
+        for name, link in self.l.items():
+            self.add_link(name, link)
+
+    def get_chain_info(self):
+        links = self._sort_links()
+        ret = ""
+        for name, link in links:
+            ret += "{}:({},{})\n".format(name,len(link.W.data[0]),len(link.W.data))
+        return ret
+
+    def _sort_links(self):
+        links = [[name, link] for name, link in self.l.items()]
+        sort_list = [[re.search("[a-z A-Z]*", name).group(), (re.search("[0-9]+", name)), name, link] for name, link in links]
+        sort_list.sort(key = lambda x:(x[0],int(x[1].group())) if x[1] != None else (x[0],0))
+
+        ret_list = [[name, link] for _,_, name, link in sort_list]
+
+        return ret_list
+
+    def set_optimizer(self, opt):
+        self.opt = opt.__class__.__name__
+
+    def get_optimizer_name(self):
+        return self.opt
+
+
+class Q(ChainInfo):
     def __init__(self, state_dim, action_num ):
         super(Q, self).__init__(
             l1=F.Linear(state_dim, 512),
@@ -59,17 +131,23 @@ class Agent():
         
         # DQN Model
         print("Network")
-        print("In:{}".format(self.STATE_DIM))
-        print("Out:{}\n".format(len(self.actions)))
+#       print("In:{}".format(self.STATE_DIM))
+#       print("Out:{}\n".format(len(self.actions)))
         self.model = Q(self.STATE_DIM, len(self.actions))
         if gpu_flag >= 0:
             self.model.to_gpu()
 
         self.model_target = copy.deepcopy(self.model)
 
-        self.optimizer = optimizers.RMSpropGraves(lr=0.00025,alpha=0.95,momentum=0.95,eps=0.0001)
-#       self.optimizer = optimizers.Adam()
+#       self.optimizer = optimizers.RMSpropGraves(lr=0.00025,alpha=0.95,momentum=0.95,eps=0.0001)
+        self.optimizer = optimizers.Adam()
         self.optimizer.setup(self.model)
+
+        print(self.model.get_chain_info())
+        self.model.set_optimizer(self.optimizer)
+        print("Optimizer")
+        print(self.model.get_optimizer_name())
+        print()
         
         self.epsilon = epsilon
         
@@ -305,7 +383,7 @@ class Tetris:
     def cm_wait_key_thread(cls):
         stop_flag = False
         while not stop_flag:
-            s = str(msvcrt.getwch())
+            s = str(_getchar())
             if s in 'q':
                 Tetris.end_flag = 1
                 stop_flag = True
@@ -505,7 +583,7 @@ class Tetris:
 
     def wait_key_thread(self):
         while True:
-            s = str(msvcrt.getwch())
+            s = str(_getchar())
             if s in 'j' or s in 'a':
                 self.movement -= 1
             if s in 'l' or s in 'd':
