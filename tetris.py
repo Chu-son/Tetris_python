@@ -1,4 +1,5 @@
-﻿#-*- coding:utf-8 -*- 
+#! /usr/bin/env python
+#-*- coding:utf-8 -*- 
 from __future__ import print_function
 import sys
 
@@ -32,17 +33,19 @@ screen."""
 
 class _GetchUnix:
     def __init__(self):
-        import tty, sys
+        import tty, sys, termios
 
     def __call__(self):
         import sys, tty, termios
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         try:
-            tty.setraw(sys.stdin.fileno())
+            #tty.setraw(sys.stdin.fileno())
+            tty.setcbreak(sys.stdin.fileno())
             ch = sys.stdin.read(1)
         finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            #termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            termios.tcsetattr(fd, termios.TCSANOW, old_settings)
         return ch
 
 
@@ -52,7 +55,7 @@ class _GetchWindows:
 
     def __call__(self):
         import msvcrt
-        return msvcrt.getwch()
+        return msvcrt.getwchreak
 
 _getchar = _Getch()
 
@@ -303,10 +306,10 @@ class Drawer():
         self.rows = 0
         self.max_cols = []
 
-        self.draw_char = ['_','#',' '] if is_half else ['＿','■','　']
+        self.draw_char = ['_','#',' '] if is_half else ['＿','■ ','　']
         self.delete_space = ' ' if is_half else '　'
 
-    def print(self, c):
+    def print_(self, c):
         if isinstance(c, str):
             print_23(c, '')
         else:
@@ -317,9 +320,9 @@ class Drawer():
 
         for c in line:
             if isinstance(c, list):
-                for c_ in c:self.print(c_)
+                for c_ in c:self.print_(c_)
             else:
-                self.print(c)
+                self.print_(c)
         if len(self.max_cols)-1 >= self.rows:
             print_23 (self.delete_space * self.max_cols[self.rows])
             self.max_cols[self.rows] = len(line)
@@ -765,7 +768,7 @@ class Tetris:
 def start_learning(tetris_size, is_half, num_of_tetris):
     print_23("\033[0;0H", end = '')
     print_23("\033[2J", end = '')
-    
+
     tetris_list = [ Tetris(tetris_size, is_half, False) for _ in range(num_of_tetris) ]
     tetris_list[0].set_draw(True)
     Tetris.cm_start_wait_key()
@@ -792,7 +795,7 @@ if __name__ == "__main__":
     plt.plot([0.0])
     plt.pause(0.01)
     plt.close()
-    
+
     parser = argparse.ArgumentParser(add_help=False, description = "TETRIS")
     parser.add_argument("--help", action="help")
     parser.add_argument("-g","--gpu",type=int,default=-1)
