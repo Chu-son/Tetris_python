@@ -9,6 +9,8 @@ import threading
 import random
 import argparse
 import pickle
+import matplotlib
+matplotlib.use(matplotlib.get_backend(),warn = False)
 import matplotlib.pyplot as plt
 
 import re
@@ -18,6 +20,8 @@ import chainer
 from chainer import cuda, optimizers, FunctionSet, Variable, Chain
 import chainer.functions as F
 
+import warnings
+warnings.filterwarnings("ignore")
 
 class _Getch:
     """Gets a single character from standard input.  Does not echo to the
@@ -306,7 +310,7 @@ class Drawer():
         self.rows = 0
         self.max_cols = []
 
-        self.draw_char = ['_','#',' '] if is_half else ['＿','■ ','　']
+        self.draw_char = ['_','#',' '] if is_half else ['＿','■','　']
         self.delete_space = ' ' if is_half else '　'
 
     def print_(self, c):
@@ -324,7 +328,7 @@ class Drawer():
             else:
                 self.print_(c)
         if len(self.max_cols)-1 >= self.rows:
-            print_23 (self.delete_space * self.max_cols[self.rows])
+            print_23 (self.delete_space * (self.max_cols[self.rows] - len(line)))
             self.max_cols[self.rows] = len(line)
         else:
             print_23()
