@@ -2,6 +2,7 @@
 #-*- coding:utf-8 -*- 
 from __future__ import print_function
 import sys
+import os
 
 import time
 import copy
@@ -13,7 +14,6 @@ import matplotlib
 matplotlib.use(matplotlib.get_backend(),warn = False)
 import matplotlib.pyplot as plt
 
-import re
 import math
 import numpy as np
 import chainer
@@ -23,86 +23,13 @@ import chainer.functions as F
 import warnings
 warnings.filterwarnings("ignore")
 
-class _Getch:
-    """Gets a single character from standard input.  Does not echo to the
-screen."""
-    def __init__(self):
-        try:
-            self.impl = _GetchWindows()
-        except ImportError:
-            self.impl = _GetchUnix()
+from myutils.myutils import _Getch
+from myutils.myjson import JsonAdapter
+from myutils.mychainerutils import ChainInfo
+import json
 
-    def __call__(self): return self.impl()
-
-
-class _GetchUnix:
-    def __init__(self):
-        import tty, sys, termios
-
-    def __call__(self):
-        import sys, tty, termios
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            #tty.setraw(sys.stdin.fileno())
-            tty.setcbreak(sys.stdin.fileno())
-            ch = sys.stdin.read(1)
-        finally:
-            #termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-            termios.tcsetattr(fd, termios.TCSANOW, old_settings)
-        return ch
-
-
-class _GetchWindows:
-    def __init__(self):
-        import msvcrt
-
-    def __call__(self):
-        import msvcrt
-        return msvcrt.getwchreak
 
 _getchar = _Getch()
-
-
-# 2系と3系の互換用.endがNoneでなければ改行しない
-def print_23(s = '', end = None):
-    if end != None:
-        print(s,end = '')
-    else:
-        print(s)
-
-class ChainInfo(Chain):
-    def __init__(self, **links):
-        super().__init__()
-
-        self.l = links
-        self.opt = ''
-
-        for name, link in self.l.items():
-            self.add_link(name, link)
-
-    def get_chain_info(self):
-        links = self._sort_links()
-        ret = ""
-        for name, link in links:
-            ret += "{}:({},{})\n".format(name,len(link.W.data[0]),len(link.W.data))
-        return ret
-
-    def _sort_links(self):
-        links = [[name, link] for name, link in self.l.items()]
-        sort_list = [[re.search("[a-z A-Z]*", name).group(), (re.search("[0-9]+", name)), name, link] for name, link in links]
-        sort_list.sort(key = lambda x:(x[0],int(x[1].group())) if x[1] != None else (x[0],0))
-
-        ret_list = [[name, link] for _,_, name, link in sort_list]
-
-        return ret_list
-
-    def set_optimizer(self, opt):
-        self.opt = opt.__class__.__name__
-
-    def get_optimizer_name(self):
-        return self.opt
-
 
 class Q(ChainInfo):
     def __init__(self, state_dim, action_num ):
@@ -125,8 +52,8 @@ class Q(ChainInfo):
         return y
 
 
-class Agent():
-    def __init__(self, field, epsilon = 1.0):
+class Agent(JsonAdapter):
+    def __init__(self, field, agentdata = None):
         self.FRAME_NUM = 1
         self.PREV_ACTIONS_NUM = self.FRAME_NUM
 
@@ -134,29 +61,20 @@ class Agent():
         self.STATE_DIM = self.FIELD_SIZE[0] * self.FIELD_SIZE[1] * self.FRAME_NUM + self.PREV_ACTIONS_NUM
         
         # 行動
-        self.actions = range(-3, 5) # 左右移動(最大2),回転,スキップ
+        self.actions = list(range(-3, 5)) # 左右移動(最大2),回転,スキップ
         
         # DQN Model
-        print("Network")
-#       print("In:{}".format(self.STATE_DIM))
-#       print("Out:{}\n".format(len(self.actions)))
-        self.model = Q(self.STATE_DIM, len(self.actions))
+        self.model = Q(self.STATE_DIM, len(self.actions)) if agentdata is None else agentdata.model
         if gpu_flag >= 0:
             self.model.to_gpu()
 
         self.model_target = copy.deepcopy(self.model)
 
 #       self.optimizer = optimizers.RMSpropGraves(lr=0.00025,alpha=0.95,momentum=0.95,eps=0.0001)
-        self.optimizer = optimizers.Adam()
+        self.optimizer = optimizers.Adam() if agentdata is None else agentdata.optimizer
         self.optimizer.setup(self.model)
 
-        print(self.model.get_chain_info())
-        self.model.set_optimizer(self.optimizer)
-        print("Optimizer")
-        print(self.model.get_optimizer_name())
-        print()
-        
-        self.epsilon = epsilon
+        self.epsilon = 1.0 
         
         # 経験関連
         self.memPos = 0 
@@ -165,6 +83,7 @@ class Agent():
                      np.zeros((self.memSize,1), dtype=np.float32),
                      np.zeros((self.memSize,1), dtype=np.float32),
                      np.zeros((self.memSize,self.STATE_DIM), dtype=np.float32)]
+        if not agentdata is None:self.eMem = agentdata.experience
 
         # 学習関連のパラメータ
         self.batch_num = 32
@@ -178,6 +97,18 @@ class Agent():
 
         self.is_draw_graph = False
         self.is_train = True
+
+        if not agentdata is None:
+            self.serialize(agentdata.params)
+
+        print("Network")
+#       print("In:{}".format(self.STATE_DIM))
+#       print("Out:{}\n".format(len(self.actions)))
+        print(self.model.get_chain_info_str())
+        self.model.set_optimizer(self.optimizer)
+        print("Optimizer")
+        print(self.model.get_optimizer_name())
+        print()
         
     class Container():
         def __init__(self, field_size, frame_num, prev_action_num):
@@ -198,6 +129,13 @@ class Agent():
             if len(self.prevActions) == 0: return
             self.prevActions[1:self.prev_action_num] = self.prevActions[:-1]
             self.prevActions[0] = action
+
+    class AgentData():
+        def __init__(self, model, experience, params, optimizer):
+            self.model = model
+            self.experience = experience
+            self.params = params
+            self.optimizer = optimizer
     
     def get_container(self):
         return self.Container(self.FIELD_SIZE, self.FRAME_NUM, self.PREV_ACTIONS_NUM)
@@ -315,9 +253,9 @@ class Drawer():
 
     def print_(self, c):
         if isinstance(c, str):
-            print_23(c, '')
+            print(c, end = '')
         else:
-            print_23(self.draw_char[c], '')
+            print(self.draw_char[c], end = '')
         
     def draw_line(self, line):
         if not self.is_draw:return
@@ -328,17 +266,17 @@ class Drawer():
             else:
                 self.print_(c)
         if len(self.max_cols)-1 >= self.rows:
-            print_23 (self.delete_space * (self.max_cols[self.rows] - len(line)))
+            print (self.delete_space * (self.max_cols[self.rows] - len(line)))
             self.max_cols[self.rows] = len(line)
         else:
-            print_23()
+            print()
             self.max_cols.append(len(line))
         
         self.rows += 1
 
     def reset(self):
         if not self.is_draw:return
-        print_23("\033[{}A".format(self.rows),end="")
+        print("\033[{}A".format(self.rows),end="")
         self.rows = 0
 
 class RewardCalculator():
@@ -464,9 +402,9 @@ class Tetris:
         self.drawer.is_draw = is_draw
         self.drawer.reset()
 
-    def init_learning(self):
+    def init_learning(self, agent = None):
         if Tetris.agent == None:
-            Tetris.agent = Agent(self.field)
+            Tetris.agent = Agent(self.field) if agent is None else Agent(self.field,agent)
         self.container = Tetris.agent.get_container()
 
     def ai_get_action(self):
@@ -684,8 +622,8 @@ class Tetris:
         return [1] + [fill for _ in range(self.field_info[0])] + [1]
 
     def start(self):
-        print_23("\033[0;0H", end = '')
-        print_23("\033[2J", end = '')
+        print("\033[0;0H", end = '')
+        print("\033[2J", end = '')
 
         self.start_wait_key()
 
@@ -768,32 +706,90 @@ class Tetris:
                 self.rewardCalclator.gameover()
                 return False
         return True
+    
+import enum
+class SaveLoadBase():
+    formats_ = enum.Enum("Json","pickle")
 
-def start_learning(tetris_size, is_half, num_of_tetris):
-    print_23("\033[0;0H", end = '')
-    print_23("\033[2J", end = '')
+    def __init__(self,dirname):
+        self.dirname = dirname
 
+    def save(self, data, dataname, format_):
+        if format_ is formats_["Json"]:
+            with open(self.dirname + '/' + dataname, "w") as f:
+                f.write(data)
+        elif format_ is formats_["pickle"]:
+            with open(self.dirname + '/' + dataname, "wb") as f:
+                pickle.dump(data, f)
+
+    def load(self):
+        pass
+
+
+    
+def start_learning(tetris_size, is_half, num_of_tetris, savedataname):
+    print("\033[0;0H", end = '')
+    print("\033[2J", end = '')
+
+    # load data
+    if savedataname != '':
+        savedataname += '/'
+        with open(savedataname + "model.model", "rb") as f:
+            model = pickle.load(f)
+        with open(savedataname + "optimizer.opt", "rb") as f:
+            opt = pickle.load(f)
+        with open(savedataname + "experience.exp", "rb") as f:
+            exp = pickle.load(f)
+        with open(savedataname + "agentparams.json", "r") as f:
+            agentdata = json.load(f)
+        with open(savedataname + "tetrisparams.json", "r") as f:
+            tetrisdata = json.load(f)
+        num_of_tetris = tetrisdata["num"]
+        Tetris.total_score = tetrisdata["totalscore"]
+        agent = Agent.AgentData(model,exp, agentdata, opt)
+
+        print("Load data")
+    else:agent = None
+
+    print(str(num_of_tetris) + " tetris\n")
+
+    # prerare tetris list
     tetris_list = [ Tetris(tetris_size, is_half, False) for _ in range(num_of_tetris) ]
     tetris_list[0].set_draw(True)
     Tetris.cm_start_wait_key()
 
+    # init
     for tetris in tetris_list:
         tetris.default_speed = 0
         tetris.init_next_block()
-        tetris.init_learning()
+        tetris.init_learning(agent)
+    # learning loop
     while Tetris.end_flag == 0:
         for tetris in tetris_list:
             tetris.move_blocks()
         Tetris.cm_ai_learning()
 
     is_save_model = input("Do you want to save ?(y/n) => ")
+    # save
     if 'y' in is_save_model or is_save_model == '':
-        f_name = input("File name => ")
+        f_name = input("Directory name => ")
         f_name = "tetris" if f_name == "" else f_name
-        with open(f_name + ".mymodel", "wb") as f:
+        if not os.path.exists(f_name):
+            os.mkdir(f_name)
+        f_name += "/"
+        with open(f_name + "model.model", "wb") as f:
             pickle.dump(Tetris.agent.model.to_cpu(), f)
-        with open(f_name + ".myexp", "wb") as f:
+        with open(f_name + "optimizer.opt", "wb") as f:
+            pickle.dump(Tetris.agent.optimizer, f)
+        with open(f_name + "experience.exp", "wb") as f:
             pickle.dump(Tetris.agent.eMem, f)
+        with open(f_name + "agentparams.json", "w") as f:
+            f.write(Tetris.agent.to_json())
+        with open(f_name + "tetrisparams.json", "w") as f:
+            d = {"num":num_of_tetris,"totalscore":Tetris.total_score}
+            json.dump(d,f,ensure_ascii=False,indent=4)
+
+        print("Saved in " + f_name)
 
 if __name__ == "__main__":
     plt.plot([0.0])
@@ -804,10 +800,11 @@ if __name__ == "__main__":
     parser.add_argument("--help", action="help")
     parser.add_argument("-g","--gpu",type=int,default=-1)
     parser.add_argument("--half", type=bool, default=False)
-    parser.add_argument("--mode", type=int, default=0, help="0:nomal tetris, 1:single learning, 2~:multiple learning")
+    parser.add_argument("--mode", type=int, default=1, help="0:nomal tetris, 1:learning")
+    parser.add_argument("-n","--num", type=int, default=1, help="Num of tetris")
     parser.add_argument("-w","--width" , type=int, default=10)
     parser.add_argument("-h","--height", type=int, default=15)
-    parser.add_argument("--model", type=str, default='')
+    parser.add_argument("--savedata", type=str, default='')
     args = parser.parse_args()
 
     gpu_flag = args.gpu
@@ -824,5 +821,5 @@ if __name__ == "__main__":
         tetris = Tetris(tetris_size, args.half)
         tetris.start()
     else:
-        start_learning(tetris_size, args.half, args.mode)
+        start_learning(tetris_size, args.half, args.num, args.savedata)
 
