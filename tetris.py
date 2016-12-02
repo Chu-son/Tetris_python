@@ -31,6 +31,51 @@ import json
 
 _getchar = _Getch()
 
+#class Q(ChainInfo):
+#    def __init__(self, state_dim, action_num ):
+#        super(Q, self).__init__(
+#            l1=F.Linear(state_dim, 512),
+#            l2=F.Linear(512, 2048),
+#            l3=F.Linear(2048, 3072),
+#            l4=F.Linear(3072, 2048),
+#            l5=F.Linear(2048, 512),
+#            q_value=F.Linear(512, action_num)
+#        )
+#    def __call__(self, x, t):
+#        return F.mean_squared_error(self.predict(x, train=True), t)
+#        
+#    def predict(self, x, train = False):
+#        h1 = F.dropout(F.leaky_relu(self.l1(x)), train = train)
+#        h2 = F.dropout(F.leaky_relu(self.l2(h1)), train = train)
+#        h3 = F.dropout(F.leaky_relu(self.l3(h2)), train = train)
+#        h4 = F.dropout(F.leaky_relu(self.l4(h3)), train = train)
+#        h5 = F.dropout(F.leaky_relu(self.l5(h4)), train = train)
+#        y = self.q_value(h5)
+#        return y
+#
+
+#class Q(ChainInfo):
+#    def __init__(self, state_dim, action_num ):
+#        super(Q, self).__init__(
+#            l1=F.Linear(state_dim, 512),
+#            l2=F.Linear(512, 2048),
+#            l3=F.Linear(2048, 3072),
+#            l4=F.Linear(3072, 2048),
+#            l5=F.Linear(2048, 512),
+#            q_value=F.Linear(512, action_num)
+#        )
+#    def __call__(self, x, t):
+#        return F.mean_squared_error(self.predict(x, train=True), t)
+#        
+#    def predict(self, x, train = False):
+#        h1 = F.leaky_relu(self.l1(x))
+#        h2 = F.leaky_relu(self.l2(h1))
+#        h3 = F.leaky_relu(self.l3(h2))
+#        h4 = F.leaky_relu(self.l4(h3))
+#        h5 = F.leaky_relu(self.l5(h4))
+#        y = self.q_value(h5)
+#        return y
+
 class Q(ChainInfo):
     def __init__(self, state_dim, action_num ):
         super(Q, self).__init__(
@@ -50,7 +95,6 @@ class Q(ChainInfo):
         h4 = F.leaky_relu(self.l4(h3))
         y = self.q_value(h4)
         return y
-
 
 class Agent(JsonAdapter):
     def __init__(self, field, agentdata = None):
@@ -90,7 +134,7 @@ class Agent(JsonAdapter):
         self.gamma = 0.99
         self.initial_exploration = 10**4
         self.target_model_update_freq = 10**4
-        self.epsilon_decrement = 1.0 / 10**6
+        self.epsilon_decrement = 1.0 / 10**5
         self.min_epsilon = 0.1
 
         self.loss_list = []
@@ -142,7 +186,7 @@ class Agent(JsonAdapter):
 
     def get_action_value(self, state):
         x = Variable(state.reshape((1, -1)))
-        return self.model.predict(x).data[0]
+        return self.model.predict(x,self.is_train).data[0]
         
     def get_greedy_action(self, state):
         action_index = np.argmax(self.get_action_value(state))
@@ -155,13 +199,16 @@ class Agent(JsonAdapter):
         
     def get_action(self,state):
         action = 0
+        is_random = False
         ep = self.epsilon if self.is_train else self.min_epsilon
+#       ep = self.epsilon if self.is_train else 0
 
         if np.random.random() < ep:
             action_index = np.random.randint(len(self.actions))
+            is_random = True
         else:
             action_index = cuda.to_cpu(self.get_greedy_action(state)) if gpu_flag >= 0 else self.get_greedy_action(state)
-        return self.actions[action_index]
+        return self.actions[action_index], is_random
 
     def experience(self, prev_state, action, reward, state):
         if not self.is_train:return
@@ -193,10 +240,10 @@ class Agent(JsonAdapter):
         state       = xp.array(self.eMem[3][batch_index], dtype=xp.float32)
         
         s = Variable(prev_state)
-        Q = self.model.predict(s)
+        Q = self.model.predict(s, self.is_train)
 
         s_dash = Variable(state)
-        tmp = self.model_target.predict(s_dash)
+        tmp = self.model_target.predict(s_dash, self.is_train)
         tmp = list(map(xp.max, tmp.data))
         max_Q_dash = xp.asanyarray(tmp,dtype=xp.float32)
         target = xp.asanyarray(copy.deepcopy(Q.data),dtype=xp.float32)
@@ -209,6 +256,8 @@ class Agent(JsonAdapter):
         td = Variable(target) - Q 
         td_tmp = td.data + 1000.0 * (abs(td.data) <= 1)
         td_clip = td * (abs(td.data) <= 1) + td/abs(td_tmp) * (abs(td.data) > 1)
+
+        #td_clip = td
         
         zero_val = Variable(xp.zeros((self.batch_num, len(self.actions)),dtype=xp.float32))
 
@@ -283,7 +332,7 @@ class RewardCalculator():
     def __init__(self):
         self.reset()
 
-        max_point = 4 # 一回のアクションで獲得できる最大ポイント
+        max_point = 2 # 一回のアクションで獲得できる最大ポイント
         self.base_reward = 1.0 / max_point # 1ポイント分の報酬.最大ポイントで1.0になる
 
     def exception(self):
@@ -296,13 +345,17 @@ class RewardCalculator():
         self.total_point += point
 
     def get_reward(self):
-        reward = 0
+        reward = -0.05
         if self.gameover_penalty_flag:
             reward = -1.0
-        elif self.exception_penalty_flag:
-            reward = -0.5
+#        elif self.exception_penalty_flag:
+#            reward = -0.5
         else:
             reward = self.total_point * self.base_reward
+
+        absreward = abs(reward)
+        if absreward > 1.0:
+            reward = max(1.0,absreward) * reward/absreward
 
         self.reset()
         return reward
@@ -364,19 +417,20 @@ class Tetris:
         self.tmp_field = []
 
         self.blocks =  [
-                        [[2,1,1],
-                         [1,1,2]],
-
-                        [[1,2,2],
-                         [1,1,1]],
-
-                        [[1,1,1],
-                         [2,1,2]],
-                        
+#                        [[2,1,1],
+#                         [1,1,2]],
+#
+#                        [[1,2,2],
+#                         [1,1,1]],
+#
+#                        [[1,1,1],
+#                         [2,1,2]],
+#                        
                         [[1,1],
                          [1,1]],
-                        
-                        [[1,1,1,1]]]
+#                        
+#                        [[1,1,1,1]]
+                        ]
 
         self.next_block, _ = self.get_new_block()
 
@@ -398,9 +452,15 @@ class Tetris:
         self.pretime = time.time()
         self.blockcount = 0
 
+        self.is_random = False
+
     def set_draw(self, is_draw):
         self.drawer.is_draw = is_draw
         self.drawer.reset()
+
+    def reset_speed(self, sp):
+        self.speed = sp
+        self.default_speed = sp
 
     def init_learning(self, agent = None):
         if Tetris.agent == None:
@@ -418,7 +478,7 @@ class Tetris:
             self.state = np.hstack(self.container.seq.reshape(1,-1)).astype(np.float32)
 
         s = cuda.to_gpu(self.state) if gpu_flag >= 0 else self.state
-        action = Tetris.agent.get_action(s)
+        action, self.is_random = Tetris.agent.get_action(s)
         self.container.push_prev_actions(action)
 
         # 前回の行動による報酬計算
@@ -468,9 +528,10 @@ class Tetris:
         #行数合わせ
         for _ in range(4-len(self.next_block)):
             self.drawer.draw_line("")
-        mem = str(Tetris.agent.is_train) if Tetris.agent != None else ''
+        mem = "Train:" + str(Tetris.agent.is_train) if Tetris.agent != None else ''
         self.drawer.draw_line(mem)
-        ep = str(Tetris.agent.epsilon) if Tetris.agent != None else ''
+        self.drawer.draw_line("Is random action:" + str(self.is_random))
+        ep = "ep:" + str(Tetris.agent.epsilon) if Tetris.agent != None else ''
         self.drawer.draw_line(ep)
         
         #フィールド表示
@@ -483,7 +544,7 @@ class Tetris:
 
     def draw_gameover(self):
         GO = list("GameOver") if self.is_half else list("ＧａｍｅＯｖｅｒ")
-        GO[0] = [GO[0], "\033[35m\033[47m\033[1m"]
+        GO[0] = ["\033[35m\033[47m\033[1m",GO[0]]
         
         str_size = len(GO)
 
@@ -567,13 +628,19 @@ class Tetris:
             self.rewardCalclator.exception()
 
         # 移動できるか
-        if self.pos + self.movement >= 0 \
-                and self.pos + self.movement <= self.field_info[0] - self.block_size[0] + 1\
-                and not self.is_hit(
-                        [rows[self.pos + self.movement : self.block_size[0] + self.pos+self.movement] 
-                            for rows in self.field[ self.row : self.row + self.block_size[1] ]] ):
-            self.pos += self.movement
-        else: self.rewardCalclator.exception()
+        while self.movement != 0:
+            if self.pos + self.movement >= 0 \
+                    and self.pos + self.movement <= self.field_info[0] - self.block_size[0] + 1\
+                    and not self.is_hit(
+                            [rows[self.pos + self.movement : self.block_size[0] + self.pos+self.movement] 
+                                for rows in self.field[ self.row : self.row + self.block_size[1] ]] ):
+                self.pos += self.movement
+                break
+            else:
+                # 可能な範囲で移動する
+                absmovement = abs(self.movement)
+                self.movement = (absmovement - 1) * self.movement//absmovement
+#       else: self.rewardCalclator.exception()
 
         if self.skip_flag:
             #while is_hit(get_block_size()):
@@ -675,7 +742,7 @@ class Tetris:
     def move_blocks(self):
         if not self.drawer.is_draw and Tetris.agent != None and not Tetris.agent.is_train:return
         self.nowtime = time.time()
-        if self.nowtime - self.pretime > self.speed:
+        if self.nowtime - self.pretime > self.speed or Tetris.agent.is_train:
             self.row += 1
             self.pretime = self.nowtime
         self.wait_key() # AIの行動決定等もここでやる
@@ -748,7 +815,7 @@ def start_learning(tetris_size, is_half, num_of_tetris, savedataname):
         Tetris.total_score = tetrisdata["totalscore"]
         agent = Agent.AgentData(model,exp, agentdata, opt)
 
-        print("Load data")
+        print("Load {} data".format(savedataname))
     else:agent = None
 
     print(str(num_of_tetris) + " tetris\n")
@@ -760,7 +827,7 @@ def start_learning(tetris_size, is_half, num_of_tetris, savedataname):
 
     # init
     for tetris in tetris_list:
-        tetris.default_speed = 0
+        tetris.reset_speed(0)
         tetris.init_next_block()
         tetris.init_learning(agent)
     # learning loop
@@ -804,7 +871,7 @@ if __name__ == "__main__":
     parser.add_argument("-n","--num", type=int, default=1, help="Num of tetris")
     parser.add_argument("-w","--width" , type=int, default=10)
     parser.add_argument("-h","--height", type=int, default=15)
-    parser.add_argument("--savedata", type=str, default='')
+    parser.add_argument("-s","--savedata", type=str, default='')
     args = parser.parse_args()
 
     gpu_flag = args.gpu

@@ -5,6 +5,9 @@ import json
 
 
 class JsonAdapter(object):
+    """
+        reference:http://qiita.com/Thiru0000/items/35554f523565e4b12b51
+    """
     # jsonからシリアライズ
     def serialize(self, argJsonData) :
 
